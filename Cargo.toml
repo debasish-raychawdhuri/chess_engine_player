@@ -1,0 +1,12 @@
+[package]
+name = "chess_engine_player"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chess = "3.2.0"
+clap = { version = "4.4", features = ["derive"] }
+anyhow = "1.0"
+thiserror = "1.0"
+iced = { version = "0.10", features = ["canvas", "tokio", "svg"] }
+tokio = { version = "1.32", features = ["full"] }
