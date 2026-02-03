@@ -215,7 +215,7 @@ impl ChessUI {
         game_result: Option<chess::GameResult>,
         window_width: u32,
         window_height: u32,
-    ) -> Element<Message> {
+    ) -> Element<'_, Message> {
         // Calculate responsive board size based on window dimensions
         let available_height = window_height as f32 * 0.8; // Use 80% of window height
         let available_width = window_width as f32 * 0.6; // Use 60% of window width
@@ -370,12 +370,13 @@ impl ChessUI {
             .padding(20)
             .align_items(Alignment::Center),
         )
+        .width(Length::Fixed(250.0))
         .style(iced::theme::Container::Custom(Box::new(SidePanelStyle)));
 
         // Combine board and info panel
         let content = row![board_view, info_panel,]
             .spacing(20)
-            .padding(20)
+            .padding([10, 20])
             .align_items(Alignment::Center);
 
         container(content)

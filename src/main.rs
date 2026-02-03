@@ -50,7 +50,7 @@ fn main() -> Result<()> {
     // Create settings for the Iced application
     let settings = Settings {
         window: window::Settings {
-            size: (800, 600),
+            size: (1000, 600),
             position: window::Position::Centered,
             min_size: Some((640, 480)),
             max_size: None,
@@ -282,7 +282,7 @@ impl Application for ChessApp {
         }
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         // Get a snapshot of the game state
         let game_state = if let Ok(game) = self.game.lock() {
             (

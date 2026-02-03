@@ -8,12 +8,6 @@ pub enum AppError {
 
     #[error("Engine error: {0}")]
     Engine(String),
-
-    #[error("Game error: {0}")]
-    Game(String),
-
-    #[error("Invalid move: {0}")]
-    InvalidMove(String),
 }
 
 impl From<&str> for AppError {
