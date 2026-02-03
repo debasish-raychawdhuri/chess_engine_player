@@ -107,29 +107,6 @@ impl PieceHandles {
             (Piece::King, Color::Black) => self.black_king.clone(),
         }
     }
-
-    // Parse piece from SAN notation
-    fn parse_piece_from_san(&self, san: &str, side: Color) -> Option<(Piece, svg::Handle)> {
-        if san.starts_with("O-O") {
-            // Castling - use King
-            return Some((Piece::King, self.get(Piece::King, side)));
-        }
-
-        // Check first character for piece indicator
-        let first_char = san.chars().next()?;
-
-        let piece = match first_char {
-            'N' | '♘' | '♞' => Piece::Knight,
-            'B' | '♗' | '♝' => Piece::Bishop,
-            'R' | '♖' | '♜' => Piece::Rook,
-            'Q' | '♕' | '♛' => Piece::Queen,
-            'K' | '♔' | '♚' => Piece::King,
-            'a'..='h' => Piece::Pawn, // Pawn moves start with file letter
-            _ => return None,
-        };
-
-        Some((piece, self.get(piece, side)))
-    }
 }
 
 // Custom style for chess squares
@@ -561,8 +538,9 @@ impl ChessUI {
                 .push(Space::with_height(Length::Fixed(4.0)));
         }
 
-        // Create scrollable move history
+        // Create scrollable move history with ID for programmatic scrolling
         let move_history_scrollable = Scrollable::new(move_history_column)
+            .id(iced::widget::scrollable::Id::new("move_history"))
             .height(Length::Fixed(300.0))
             .width(Length::Fill)
             .style(iced::theme::Scrollable::Default);

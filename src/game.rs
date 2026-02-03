@@ -2,9 +2,11 @@ use chess::{Board, ChessMove, Color, File, Game, MoveGen, Piece, Rank, Square};
 
 #[derive(Clone, Debug)]
 pub struct MoveDetails {
+    #[allow(dead_code)]
     pub notation: String,
     pub piece: Piece,
     pub destination: String,
+    #[allow(dead_code)]
     pub is_capture: bool,
 }
 
@@ -339,7 +341,7 @@ impl ChessGame {
         self.game.result()
     }
 
-    fn move_to_details(&self, chess_move: ChessMove, board: &Board, side: Color) -> MoveDetails {
+    fn move_to_details(&self, chess_move: ChessMove, board: &Board, _side: Color) -> MoveDetails {
         // Get the piece that moved
         let piece = match board.piece_on(chess_move.get_source()) {
             Some(p) => p,

@@ -106,6 +106,7 @@ pub enum Message {
     WindowResized(u32, u32),
     ViewMove(usize),
     ExitViewMode,
+    ScrollToBottom,
 }
 
 impl Application for ChessApp {
@@ -296,12 +297,16 @@ impl Application for ChessApp {
             }
 
             Message::EngineMoved(best_move) => {
-                // Apply engine move
+                // Apply the engine's move
                 if let Ok(mut game) = self.game.lock() {
                     game.make_engine_move(&best_move);
                     self.engine_thinking = false;
                 }
-                Command::none()
+                // Scroll move history to bottom to show latest move
+                iced::widget::scrollable::snap_to(
+                    iced::widget::scrollable::Id::new("move_history"),
+                    iced::widget::scrollable::RelativeOffset::END
+                )
             }
 
             Message::CheckEngineMove => {
@@ -347,6 +352,11 @@ impl Application for ChessApp {
                 if let Ok(mut game) = self.game.lock() {
                     game.set_view_mode(false);
                 }
+                Command::none()
+            }
+
+            Message::ScrollToBottom => {
+                // Scroll move history to bottom - handled by the command
                 Command::none()
             }
         }
