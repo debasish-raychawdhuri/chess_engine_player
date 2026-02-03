@@ -1,18 +1,17 @@
 mod engine;
+mod error;
 mod game;
 mod ui;
-mod error;
 
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
 
-use clap::Parser;
 use anyhow::Result;
+use clap::Parser;
 use iced::{
-    Application, Command, Element, Settings, Theme,
-    executor, window, Size, Event, Subscription,
+    executor, window, Application, Command, Element, Event, Settings, Size, Subscription, Theme,
 };
 
 use crate::engine::ChessEngine;
@@ -47,7 +46,7 @@ fn main() -> Result<()> {
     // Validate arguments
     let skill_level = args.skill_level.clamp(1, 20);
     let think_time = args.think_time.max(100);
-    
+
     // Create settings for the Iced application
     let settings = Settings {
         window: window::Settings {
@@ -116,19 +115,19 @@ impl Application for ChessApp {
         // Create game and engine
         let mut game = ChessGame::new();
         let engine = ChessEngine::new();
-        
+
         // Set player color if playing as black
         if flags.play_as_black {
             game.set_player_color(chess::Color::Black);
         }
-        
+
         // Create shared state
         let game = Arc::new(Mutex::new(game));
         let engine = Arc::new(Mutex::new(engine));
-        
+
         // Create UI
         let ui = ChessUI::new();
-        
+
         // Create application
         let app = ChessApp {
             game,
@@ -137,7 +136,7 @@ impl Application for ChessApp {
             engine_thinking: false,
             window_size: Size::new(800, 600),
         };
-        
+
         // Start the engine and get first move if playing as black
         let engine_clone = Arc::clone(&app.engine);
         let game_clone = Arc::clone(&app.game);
@@ -145,24 +144,27 @@ impl Application for ChessApp {
         let skill_level = flags.skill_level;
         let think_time = flags.think_time;
         let play_as_black = flags.play_as_black;
-        
-        let command = Command::perform(async move {
-            // Start the engine
-            if let Ok(mut engine) = engine_clone.lock() {
-                let _ = engine.start(&engine_path, skill_level, think_time);
-            }
-            
-            // If playing as black, get first move from engine
-            if play_as_black {
-                if let Ok(game) = game_clone.lock() {
-                    if let Ok(mut engine) = engine_clone.lock() {
-                        let fen = game.current_position().to_string();
-                        let _ = engine.get_move(&fen);
+
+        let command = Command::perform(
+            async move {
+                // Start the engine
+                if let Ok(mut engine) = engine_clone.lock() {
+                    let _ = engine.start(&engine_path, skill_level, think_time);
+                }
+
+                // If playing as black, get first move from engine
+                if play_as_black {
+                    if let Ok(game) = game_clone.lock() {
+                        if let Ok(mut engine) = engine_clone.lock() {
+                            let fen = game.current_position().to_string();
+                            let _ = engine.get_move(&fen);
+                        }
                     }
                 }
-            }
-        }, |_| Message::CheckEngineMove);
-        
+            },
+            |_| Message::CheckEngineMove,
+        );
+
         (app, command)
     }
 
@@ -180,51 +182,57 @@ impl Application for ChessApp {
                         if game.game_result().is_none() {
                             self.engine_thinking = true;
                             game.set_thinking(true);
-                            
+
                             // Get engine move
                             let engine_clone = Arc::clone(&self.engine);
                             let game_clone = Arc::clone(&self.game);
-                            
-                            return Command::perform(async move {
+
+                            return Command::perform(
+                                async move {
+                                    if let Ok(game) = game_clone.lock() {
+                                        if let Ok(mut engine) = engine_clone.lock() {
+                                            let fen = game.current_position().to_string();
+                                            let _ = engine.get_move(&fen);
+                                        }
+                                    }
+                                },
+                                |_| Message::CheckEngineMove,
+                            );
+                        }
+                    }
+                }
+                Command::none()
+            }
+
+            Message::ResetGame => {
+                // Reset the game
+                if let Ok(mut game) = self.game.lock() {
+                    game.reset();
+
+                    // If playing as black, get first move from engine
+                    if game.player_color() == chess::Color::Black {
+                        self.engine_thinking = true;
+                        game.set_thinking(true);
+
+                        let engine_clone = Arc::clone(&self.engine);
+                        let game_clone = Arc::clone(&self.game);
+
+                        return Command::perform(
+                            async move {
                                 if let Ok(game) = game_clone.lock() {
                                     if let Ok(mut engine) = engine_clone.lock() {
                                         let fen = game.current_position().to_string();
                                         let _ = engine.get_move(&fen);
                                     }
                                 }
-                            }, |_| Message::CheckEngineMove);
-                        }
+                            },
+                            |_| Message::CheckEngineMove,
+                        );
                     }
                 }
                 Command::none()
             }
-            
-            Message::ResetGame => {
-                // Reset the game
-                if let Ok(mut game) = self.game.lock() {
-                    game.reset();
-                    
-                    // If playing as black, get first move from engine
-                    if game.player_color() == chess::Color::Black {
-                        self.engine_thinking = true;
-                        game.set_thinking(true);
-                        
-                        let engine_clone = Arc::clone(&self.engine);
-                        let game_clone = Arc::clone(&self.game);
-                        
-                        return Command::perform(async move {
-                            if let Ok(game) = game_clone.lock() {
-                                if let Ok(mut engine) = engine_clone.lock() {
-                                    let fen = game.current_position().to_string();
-                                    let _ = engine.get_move(&fen);
-                                }
-                            }
-                        }, |_| Message::CheckEngineMove);
-                    }
-                }
-                Command::none()
-            }
-            
+
             Message::UndoMove => {
                 // Undo the last move pair
                 if let Ok(mut game) = self.game.lock() {
@@ -232,7 +240,7 @@ impl Application for ChessApp {
                 }
                 Command::none()
             }
-            
+
             Message::EngineMoved(best_move) => {
                 // Apply engine move
                 if let Ok(mut game) = self.game.lock() {
@@ -241,7 +249,7 @@ impl Application for ChessApp {
                 }
                 Command::none()
             }
-            
+
             Message::CheckEngineMove => {
                 // Check if engine has a move ready
                 if let Ok(engine) = self.engine.lock() {
@@ -249,15 +257,15 @@ impl Application for ChessApp {
                         return Command::perform(async { best_move }, Message::EngineMoved);
                     }
                 }
-                
+
                 // Schedule another check if engine is still thinking
                 if self.engine_thinking {
                     return Command::perform(async {}, |_| Message::CheckEngineMove);
                 }
-                
+
                 Command::none()
             }
-            
+
             Message::Tick => {
                 // Regular tick for UI updates
                 if self.engine_thinking {
@@ -265,7 +273,7 @@ impl Application for ChessApp {
                 }
                 Command::none()
             }
-            
+
             Message::WindowResized(width, height) => {
                 // Update window size
                 self.window_size = Size::new(width, height);
@@ -298,7 +306,7 @@ impl Application for ChessApp {
                 None,
             )
         };
-        
+
         // Render the UI with current window size
         self.ui.view(
             game_state.0,
@@ -312,12 +320,11 @@ impl Application for ChessApp {
             self.window_size.height,
         )
     }
-    
+
     fn subscription(&self) -> Subscription<Message> {
         // Subscribe to time ticks for regular updates and window resize events
         Subscription::batch(vec![
-            iced::time::every(std::time::Duration::from_millis(100))
-                .map(|_| Message::Tick),
+            iced::time::every(std::time::Duration::from_millis(100)).map(|_| Message::Tick),
             iced::subscription::events_with(|event, _| {
                 if let Event::Window(window::Event::Resized { width, height }) = event {
                     Some(Message::WindowResized(width, height))
@@ -326,5 +333,9 @@ impl Application for ChessApp {
                 }
             }),
         ])
+    }
+
+    fn theme(&self) -> Theme {
+        Theme::Dark
     }
 }
