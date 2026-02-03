@@ -1,17 +1,20 @@
 use chess::{Board, ChessMove, Color, File, Piece, Rank, Square};
 use iced::widget::button::Appearance;
+use iced::widget::scrollable::Scrollable;
 use iced::{
     widget::{button, column, container, row, svg, text, Space},
     Alignment, Color as IcedColor, Element, Length,
 };
 
+use crate::game::MoveRecord;
 use crate::Message;
 
 // Colors for the chess board
 const LIGHT_SQUARE: IcedColor = IcedColor::from_rgb(0.93, 0.93, 0.8);
 const DARK_SQUARE: IcedColor = IcedColor::from_rgb(0.46, 0.59, 0.34);
 const SELECTED_SQUARE: IcedColor = IcedColor::from_rgb(0.9, 0.8, 0.3);
-const LEGAL_MOVE_SQUARE: IcedColor = IcedColor::from_rgb(0.7, 0.9, 0.7);
+const LEGAL_MOVE_LIGHT_SQUARE: IcedColor = IcedColor::from_rgb(0.7, 0.9, 0.7);
+const LEGAL_MOVE_DARK_SQUARE: IcedColor = IcedColor::from_rgb(0.5, 0.75, 0.5);
 
 // Chess UI component
 pub struct ChessUI {
@@ -179,6 +182,77 @@ impl iced::widget::button::StyleSheet for RoundedButtonStyle {
     }
 }
 
+// Custom style for move history buttons
+struct MoveHistoryButtonStyle {
+    is_active: bool,
+}
+
+impl iced::widget::button::StyleSheet for MoveHistoryButtonStyle {
+    type Style = iced::Theme;
+
+    fn active(&self, _style: &Self::Style) -> Appearance {
+        if self.is_active {
+            Appearance {
+                background: Some(IcedColor::from_rgb(0.5, 0.7, 0.3).into()),
+                border_radius: 4.0.into(),
+                border_width: 0.0,
+                border_color: IcedColor::TRANSPARENT,
+                text_color: IcedColor::WHITE,
+                ..Default::default()
+            }
+        } else {
+            Appearance {
+                background: Some(IcedColor::from_rgb(0.25, 0.25, 0.25).into()),
+                border_radius: 4.0.into(),
+                border_width: 0.0,
+                border_color: IcedColor::TRANSPARENT,
+                text_color: IcedColor::from_rgb(0.8, 0.8, 0.8),
+                ..Default::default()
+            }
+        }
+    }
+
+    fn hovered(&self, _style: &Self::Style) -> Appearance {
+        Appearance {
+            background: Some(IcedColor::from_rgb(0.35, 0.35, 0.35).into()),
+            border_radius: 4.0.into(),
+            border_width: 0.0,
+            border_color: IcedColor::TRANSPARENT,
+            text_color: IcedColor::WHITE,
+            ..Default::default()
+        }
+    }
+}
+
+// Custom style for exit view mode button
+struct ExitViewButtonStyle;
+
+impl iced::widget::button::StyleSheet for ExitViewButtonStyle {
+    type Style = iced::Theme;
+
+    fn active(&self, _style: &Self::Style) -> Appearance {
+        Appearance {
+            background: Some(IcedColor::from_rgb(0.8, 0.3, 0.3).into()),
+            border_radius: 8.0.into(),
+            border_width: 0.0,
+            border_color: IcedColor::TRANSPARENT,
+            text_color: IcedColor::WHITE,
+            ..Default::default()
+        }
+    }
+
+    fn hovered(&self, _style: &Self::Style) -> Appearance {
+        Appearance {
+            background: Some(IcedColor::from_rgb(0.9, 0.4, 0.4).into()),
+            border_radius: 8.0.into(),
+            border_width: 0.0,
+            border_color: IcedColor::TRANSPARENT,
+            text_color: IcedColor::WHITE,
+            ..Default::default()
+        }
+    }
+}
+
 impl ChessUI {
     pub fn new() -> Self {
         ChessUI {
@@ -215,10 +289,13 @@ impl ChessUI {
         game_result: Option<chess::GameResult>,
         window_width: u32,
         window_height: u32,
+        move_records: &[MoveRecord],
+        is_view_mode: bool,
+        view_move_index: usize,
     ) -> Element<'_, Message> {
         // Calculate responsive board size based on window dimensions
         let available_height = window_height as f32 * 0.9; // Use 90% of window height
-        let available_width = window_width as f32 * 0.7; // Use 70% of window width
+        let available_width = window_width as f32 * 0.6; // Use 60% of window width
         let board_size = available_height
             .min(available_width)
             .max(self.min_board_size)
@@ -252,7 +329,11 @@ impl ChessUI {
                 let square_color = if is_selected {
                     SELECTED_SQUARE
                 } else if is_legal_move {
-                    LEGAL_MOVE_SQUARE
+                    if is_dark {
+                        LEGAL_MOVE_DARK_SQUARE
+                    } else {
+                        LEGAL_MOVE_LIGHT_SQUARE
+                    }
                 } else if is_dark {
                     DARK_SQUARE
                 } else {
@@ -305,7 +386,9 @@ impl ChessUI {
             .height(Length::Fixed(board_size));
 
         // Create status message
-        let status = if let Some(result) = game_result {
+        let status = if is_view_mode {
+            format!("Viewing position after move {}", view_move_index)
+        } else if let Some(result) = game_result {
             format!("Game over: {:?}", result)
         } else if thinking {
             "Engine is thinking...".to_string()
@@ -361,20 +444,130 @@ impl ChessUI {
             .padding(10)
             .align_items(Alignment::Center);
 
-        let info_panel = container(
+        // Build move history display with table-like layout
+        let mut move_history_column = column![];
+        move_history_column = move_history_column.width(Length::Fill);
+
+        // Fixed widths for columns: move number, white move, black move
+        let move_num_width = 35.0;
+        let move_btn_width = 70.0;
+
+        for record in move_records {
+            let mut move_row = row![];
+            move_row = move_row.width(Length::Fill);
+
+            // Move number column (fixed width)
+            move_row = move_row.push(
+                container(
+                    text(format!("{}.", record.move_num))
+                        .size(14)
+                        .style(IcedColor::from_rgb(0.6, 0.6, 0.6)),
+                )
+                .width(Length::Fixed(move_num_width))
+                .center_y(),
+            );
+
+            // White move button column (fixed width)
+            let white_btn: Element<'_, Message> = if let Some(ref white_move) = record.white_move {
+                let white_index = record.move_num * 2 - 1;
+                let is_white_active = is_view_mode && view_move_index == white_index;
+
+                button(text(white_move.clone()).size(14))
+                    .on_press(Message::ViewMove(white_index))
+                    .padding([4, 8])
+                    .width(Length::Fixed(move_btn_width))
+                    .style(iced::theme::Button::Custom(Box::new(
+                        MoveHistoryButtonStyle {
+                            is_active: is_white_active,
+                        },
+                    )))
+                    .into()
+            } else {
+                // Empty placeholder to maintain alignment
+                Space::with_width(Length::Fixed(move_btn_width)).into()
+            };
+            move_row = move_row.push(white_btn);
+
+            // Black move button column (fixed width)
+            let black_btn: Element<'_, Message> = if let Some(ref black_move) = record.black_move {
+                let black_index = record.move_num * 2;
+                let is_black_active = is_view_mode && view_move_index == black_index;
+
+                button(text(black_move.clone()).size(14))
+                    .on_press(Message::ViewMove(black_index))
+                    .padding([4, 8])
+                    .width(Length::Fixed(move_btn_width))
+                    .style(iced::theme::Button::Custom(Box::new(
+                        MoveHistoryButtonStyle {
+                            is_active: is_black_active,
+                        },
+                    )))
+                    .into()
+            } else {
+                // Empty placeholder to maintain alignment
+                Space::with_width(Length::Fixed(move_btn_width)).into()
+            };
+            move_row = move_row.push(black_btn);
+
+            move_history_column = move_history_column
+                .push(move_row.spacing(8).align_items(Alignment::Center))
+                .push(Space::with_height(Length::Fixed(4.0)));
+        }
+
+        // Create scrollable move history
+        let move_history_scrollable = Scrollable::new(move_history_column)
+            .height(Length::Fixed(300.0))
+            .width(Length::Fill)
+            .style(iced::theme::Scrollable::Default);
+
+        // Create move history section
+        let move_history_section = container(
             column![
-                text(player_info).size(20),
-                text(status).size(16),
-                text(message).size(14),
-                Space::with_height(Length::Fixed(20.0)),
-                controls,
+                text("Move History").size(18),
+                Space::with_height(Length::Fixed(10.0)),
+                move_history_scrollable,
             ]
-            .spacing(10)
-            .padding(20)
-            .align_items(Alignment::Center),
+            .spacing(5)
+            .padding(10),
         )
-        .width(Length::Fixed(280.0))
-        .style(iced::theme::Container::Custom(Box::new(SidePanelStyle)));
+        .width(Length::Fill)
+        .style(iced::theme::Container::Box);
+
+        // Exit view mode button if in view mode
+        let exit_view_button = if is_view_mode {
+            Some(
+                button(text("Exit View Mode").size(14))
+                    .on_press(Message::ExitViewMode)
+                    .padding([8, 16])
+                    .style(iced::theme::Button::Custom(Box::new(ExitViewButtonStyle))),
+            )
+        } else {
+            None
+        };
+
+        // Build info panel
+        let mut info_panel_content = column![
+            text(player_info).size(20),
+            text(status).size(16),
+            text(message).size(14),
+            Space::with_height(Length::Fixed(20.0)),
+            controls,
+            Space::with_height(Length::Fixed(20.0)),
+            move_history_section,
+        ]
+        .spacing(10)
+        .padding(20)
+        .align_items(Alignment::Center);
+
+        // Add exit view button if in view mode
+        if let Some(btn) = exit_view_button {
+            info_panel_content = info_panel_content.push(Space::with_height(Length::Fixed(10.0)));
+            info_panel_content = info_panel_content.push(btn);
+        }
+
+        let info_panel = container(info_panel_content)
+            .width(Length::Fixed(320.0))
+            .style(iced::theme::Container::Custom(Box::new(SidePanelStyle)));
 
         // Combine board and info panel
         let content = row![board_view, info_panel,]

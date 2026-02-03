@@ -1,5 +1,12 @@
 use chess::{Board, ChessMove, Color, File, Game, MoveGen, Piece, Rank, Square};
 
+#[derive(Clone, Debug)]
+pub struct MoveRecord {
+    pub move_num: usize,
+    pub white_move: Option<String>,
+    pub black_move: Option<String>,
+}
+
 pub struct ChessGame {
     game: Game,
     selected_square: Option<Square>,
@@ -9,6 +16,9 @@ pub struct ChessGame {
     player_color: Color,
     move_history: Vec<ChessMove>,
     position_history: Vec<Board>,
+    move_records: Vec<MoveRecord>,
+    view_mode: bool,
+    view_move_index: usize,
 }
 
 impl ChessGame {
@@ -22,6 +32,9 @@ impl ChessGame {
             player_color: Color::White,
             move_history: Vec::new(),
             position_history: Vec::new(),
+            move_records: Vec::new(),
+            view_mode: false,
+            view_move_index: 0,
         };
 
         // Save initial position
@@ -38,11 +51,46 @@ impl ChessGame {
         self.thinking = false;
         self.move_history.clear();
         self.position_history.clear();
+        self.move_records.clear();
+        self.view_mode = false;
+        self.view_move_index = 0;
         self.position_history.push(self.game.current_position());
     }
 
     pub fn current_position(&self) -> chess::Board {
-        self.game.current_position()
+        if self.view_mode {
+            self.position_history[self.view_move_index]
+        } else {
+            self.game.current_position()
+        }
+    }
+
+    pub fn is_view_mode(&self) -> bool {
+        self.view_mode
+    }
+
+    pub fn view_move_index(&self) -> usize {
+        self.view_move_index
+    }
+
+    pub fn set_view_mode(&mut self, enabled: bool) {
+        self.view_mode = enabled;
+        if !enabled {
+            self.view_move_index = self.position_history.len().saturating_sub(1);
+        }
+    }
+
+    pub fn view_move_at(&mut self, index: usize) {
+        if index < self.position_history.len() {
+            self.view_move_index = index;
+            self.view_mode = true;
+            self.selected_square = None;
+            self.possible_moves.clear();
+        }
+    }
+
+    pub fn get_move_records(&self) -> &Vec<MoveRecord> {
+        &self.move_records
     }
 
     pub fn selected_square(&self) -> Option<Square> {
@@ -90,6 +138,11 @@ impl ChessGame {
             return false;
         }
 
+        // Don't allow moves when in view mode
+        if self.view_mode {
+            return false;
+        }
+
         let board = self.game.current_position();
 
         if let Some(_selected) = self.selected_square {
@@ -104,10 +157,16 @@ impl ChessGame {
                 if self.game.make_move(chess_move) {
                     // Save position after making the move
                     self.position_history.push(self.game.current_position());
+
+                    // Record the move with SAN notation
+                    let san = self.move_to_san(chess_move);
+                    self.record_move(san, self.game.current_position());
+
                     self.message = format!("Move: {}", chess_move);
                     self.selected_square = None;
                     self.possible_moves.clear();
                     self.move_history.push(chess_move);
+                    self.view_move_index = self.position_history.len() - 1;
                     return true;
                 }
             } else {
@@ -194,9 +253,15 @@ impl ChessGame {
                     if self.game.make_move(m) {
                         // Save position after making the move
                         self.position_history.push(self.game.current_position());
+
+                        // Record the move with SAN notation
+                        let san = self.move_to_san(m);
+                        self.record_move(san, self.game.current_position());
+
                         self.message = format!("Engine moved: {}", uci_move);
                         self.thinking = false;
                         self.move_history.push(m);
+                        self.view_move_index = self.position_history.len() - 1;
                         return true;
                     }
                 }
@@ -212,6 +277,7 @@ impl ChessGame {
             if self.move_history.len() >= 1 && self.position_history.len() >= 2 {
                 self.move_history.pop();
                 self.position_history.pop();
+                self.move_records.pop(); // Remove the incomplete move record
                 self.thinking = false;
                 self.message = "Undid your move.".to_string();
             } else {
@@ -227,11 +293,17 @@ impl ChessGame {
                 self.position_history.pop();
                 self.position_history.pop();
 
+                // Remove the last complete move record
+                self.move_records.pop();
+
                 self.message = "Undid last move pair.".to_string();
             } else if self.move_history.len() >= 1 && self.position_history.len() >= 2 {
                 // Only one move to undo
                 self.move_history.pop();
                 self.position_history.pop();
+
+                // Remove the incomplete move record
+                self.move_records.pop();
 
                 self.message = "Undid last move.".to_string();
             } else {
@@ -246,9 +318,129 @@ impl ChessGame {
 
         self.selected_square = None;
         self.possible_moves.clear();
+        self.view_move_index = self.position_history.len().saturating_sub(1);
     }
 
     pub fn game_result(&self) -> Option<chess::GameResult> {
         self.game.result()
+    }
+
+    fn move_to_san(&self, chess_move: ChessMove) -> String {
+        let default_board = Board::default();
+        let board = self.position_history.last().unwrap_or(&default_board);
+
+        // Get the piece that moved - if not found (e.g., in view mode), return UCI notation
+        let piece = match board.piece_on(chess_move.get_source()) {
+            Some(p) => p,
+            None => {
+                // Fallback to UCI notation if we can't determine the piece
+                let from_file =
+                    (chess_move.get_source().get_file().to_index() as u8 + b'a') as char;
+                let from_rank =
+                    (chess_move.get_source().get_rank().to_index() as u8 + b'1') as char;
+                let to_file = (chess_move.get_dest().get_file().to_index() as u8 + b'a') as char;
+                let to_rank = (chess_move.get_dest().get_rank().to_index() as u8 + b'1') as char;
+                let promotion = if let Some(promo) = chess_move.get_promotion() {
+                    match promo {
+                        Piece::Queen => "q",
+                        Piece::Rook => "r",
+                        Piece::Bishop => "b",
+                        Piece::Knight => "n",
+                        _ => "",
+                    }
+                } else {
+                    ""
+                };
+                return format!(
+                    "{}{}{}{}{}",
+                    from_file, from_rank, to_file, to_rank, promotion
+                );
+            }
+        };
+
+        let piece_char = match piece {
+            Piece::Pawn => "",
+            Piece::Knight => "N",
+            Piece::Bishop => "B",
+            Piece::Rook => "R",
+            Piece::Queen => "Q",
+            Piece::King => "K",
+        };
+
+        let from_file = (chess_move.get_source().get_file().to_index() as u8 + b'a') as char;
+        let _from_rank = (chess_move.get_source().get_rank().to_index() as u8 + b'1') as char;
+        let to_file = (chess_move.get_dest().get_file().to_index() as u8 + b'a') as char;
+        let to_rank = (chess_move.get_dest().get_rank().to_index() as u8 + b'1') as char;
+
+        let capture = if board.piece_on(chess_move.get_dest()).is_some() {
+            if piece == Piece::Pawn {
+                format!("{}x", from_file)
+            } else {
+                "x".to_string()
+            }
+        } else {
+            "".to_string()
+        };
+
+        let promotion = if let Some(promo_piece) = chess_move.get_promotion() {
+            format!(
+                "={}",
+                match promo_piece {
+                    Piece::Queen => "Q",
+                    Piece::Rook => "R",
+                    Piece::Bishop => "B",
+                    Piece::Knight => "N",
+                    _ => "",
+                }
+            )
+        } else {
+            "".to_string()
+        };
+
+        let mut san = format!(
+            "{}{}{}{}{}{}",
+            piece_char,
+            if piece == Piece::Pawn && capture.is_empty() {
+                ""
+            } else {
+                ""
+            },
+            capture,
+            to_file,
+            to_rank,
+            promotion
+        );
+
+        // Check for check or checkmate
+        let new_board = board.make_move_new(chess_move);
+        if new_board.checkers().popcnt() > 0 {
+            let move_gen = MoveGen::new_legal(&new_board);
+            if move_gen.len() == 0 {
+                san.push('#');
+            } else {
+                san.push('+');
+            }
+        }
+
+        san
+    }
+
+    fn record_move(&mut self, san: String, _position: Board) {
+        let current_side = self.game.side_to_move();
+
+        if current_side == Color::Black {
+            // White just moved, create new record
+            let move_num = self.move_records.len() + 1;
+            self.move_records.push(MoveRecord {
+                move_num,
+                white_move: Some(san),
+                black_move: None,
+            });
+        } else {
+            // Black just moved, update last record
+            if let Some(last_record) = self.move_records.last_mut() {
+                last_record.black_move = Some(san);
+            }
+        }
     }
 }

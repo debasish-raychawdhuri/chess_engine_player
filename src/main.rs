@@ -103,6 +103,8 @@ pub enum Message {
     CheckEngineMove,
     Tick,
     WindowResized(u32, u32),
+    ViewMove(usize),
+    ExitViewMode,
 }
 
 impl Application for ChessApp {
@@ -128,14 +130,21 @@ impl Application for ChessApp {
         // Create UI
         let ui = ChessUI::new();
 
-        // Create application
+        // Create application with engine_thinking set if playing as black
         let app = ChessApp {
             game,
             engine,
             ui,
-            engine_thinking: false,
+            engine_thinking: flags.play_as_black,
             window_size: Size::new(800, 600),
         };
+
+        // Set thinking state in game if playing as black
+        if flags.play_as_black {
+            if let Ok(mut game) = app.game.lock() {
+                game.set_thinking(true);
+            }
+        }
 
         // Start the engine and get first move if playing as black
         let engine_clone = Arc::clone(&app.engine);
@@ -149,20 +158,36 @@ impl Application for ChessApp {
             async move {
                 // Start the engine
                 if let Ok(mut engine) = engine_clone.lock() {
-                    let _ = engine.start(&engine_path, skill_level, think_time);
+                    if let Err(e) = engine.start(&engine_path, skill_level, think_time) {
+                        eprintln!("Failed to start engine: {}", e);
+                        return false;
+                    }
                 }
 
                 // If playing as black, get first move from engine
                 if play_as_black {
+                    // Small delay to ensure engine is ready
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     if let Ok(game) = game_clone.lock() {
                         if let Ok(mut engine) = engine_clone.lock() {
                             let fen = game.current_position().to_string();
-                            let _ = engine.get_move(&fen);
+                            if let Err(e) = engine.get_move(&fen) {
+                                eprintln!("Failed to get engine move: {}", e);
+                                return false;
+                            }
                         }
                     }
+                    return true;
+                }
+                false
+            },
+            |needs_check| {
+                if needs_check {
+                    Message::CheckEngineMove
+                } else {
+                    Message::Tick
                 }
             },
-            |_| Message::CheckEngineMove,
         );
 
         (app, command)
@@ -235,9 +260,37 @@ impl Application for ChessApp {
 
             Message::UndoMove => {
                 // Undo the last move pair
+                let mut needs_engine_move = false;
                 if let Ok(mut game) = self.game.lock() {
                     game.undo_move_pair();
+                    // Check if it's the engine's turn after undoing
+                    if game.current_position().side_to_move() != game.player_color() {
+                        needs_engine_move = true;
+                    }
                 }
+                
+                // If it's the engine's turn, trigger engine move
+                if needs_engine_move {
+                    self.engine_thinking = true;
+                    if let Ok(mut game) = self.game.lock() {
+                        game.set_thinking(true);
+                    }
+                    let engine_clone = Arc::clone(&self.engine);
+                    let game_clone = Arc::clone(&self.game);
+                    
+                    return Command::perform(
+                        async move {
+                            if let Ok(game) = game_clone.lock() {
+                                if let Ok(mut engine) = engine_clone.lock() {
+                                    let fen = game.current_position().to_string();
+                                    let _ = engine.get_move(&fen);
+                                }
+                            }
+                        },
+                        |_| Message::CheckEngineMove,
+                    );
+                }
+                
                 Command::none()
             }
 
@@ -279,6 +332,22 @@ impl Application for ChessApp {
                 self.window_size = Size::new(width, height);
                 Command::none()
             }
+
+            Message::ViewMove(index) => {
+                // View a specific move in history
+                if let Ok(mut game) = self.game.lock() {
+                    game.view_move_at(index);
+                }
+                Command::none()
+            }
+
+            Message::ExitViewMode => {
+                // Exit view mode and return to current position
+                if let Ok(mut game) = self.game.lock() {
+                    game.set_view_mode(false);
+                }
+                Command::none()
+            }
         }
     }
 
@@ -293,6 +362,9 @@ impl Application for ChessApp {
                 game.is_thinking(),
                 game.player_color(),
                 game.game_result(),
+                game.get_move_records().clone(),
+                game.is_view_mode(),
+                game.view_move_index(),
             )
         } else {
             // Default state if lock fails
@@ -304,6 +376,9 @@ impl Application for ChessApp {
                 false,
                 chess::Color::White,
                 None,
+                Vec::new(),
+                false,
+                0,
             )
         };
 
@@ -318,6 +393,9 @@ impl Application for ChessApp {
             game_state.6,
             self.window_size.width,
             self.window_size.height,
+            &game_state.7,
+            game_state.8,
+            game_state.9,
         )
     }
 
