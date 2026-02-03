@@ -101,18 +101,14 @@ impl ChessGame {
                 .cloned();
 
             if let Some(chess_move) = possible_move {
-                // Save current position before making the move
-                self.position_history.push(self.game.current_position());
-
                 if self.game.make_move(chess_move) {
+                    // Save position after making the move
+                    self.position_history.push(self.game.current_position());
                     self.message = format!("Move: {}", chess_move);
                     self.selected_square = None;
                     self.possible_moves.clear();
                     self.move_history.push(chess_move);
                     return true;
-                } else {
-                    // If move failed, remove the saved position
-                    self.position_history.pop();
                 }
             } else {
                 // Select a new square if it has a piece of the current player's color
@@ -195,17 +191,13 @@ impl ChessGame {
                 };
 
                 if promotion.is_none() || m.get_promotion() == promotion {
-                    // Save current position before making the move
-                    self.position_history.push(self.game.current_position());
-
                     if self.game.make_move(m) {
+                        // Save position after making the move
+                        self.position_history.push(self.game.current_position());
                         self.message = format!("Engine moved: {}", uci_move);
                         self.thinking = false;
                         self.move_history.push(m);
                         return true;
-                    } else {
-                        // If move failed, remove the saved position
-                        self.position_history.pop();
                     }
                 }
             }
@@ -215,32 +207,42 @@ impl ChessGame {
     }
 
     pub fn undo_move_pair(&mut self) {
-        // Undo both player and engine moves if possible
-        if self.move_history.len() >= 2 && self.position_history.len() >= 3 {
-            // Go back two moves
-            let previous_position = self.position_history[self.position_history.len() - 3].clone();
-            self.game = Game::new_with_board(previous_position);
-
-            // Remove the last two moves and positions
-            self.move_history.pop();
-            self.move_history.pop();
-            self.position_history.pop();
-            self.position_history.pop();
-
-            self.message = "Undid last move pair.".to_string();
-        } else if self.move_history.len() == 1 && self.position_history.len() >= 2 {
-            // Go back one move
-            let previous_position = self.position_history[self.position_history.len() - 2].clone();
-            self.game = Game::new_with_board(previous_position);
-
-            // Remove the last move and position
-            self.move_history.pop();
-            self.position_history.pop();
-
-            self.message = "Undid last move.".to_string();
+        if self.thinking {
+            // Engine is thinking - undo just the player's last move
+            if self.move_history.len() >= 1 && self.position_history.len() >= 2 {
+                self.move_history.pop();
+                self.position_history.pop();
+                self.thinking = false;
+                self.message = "Undid your move.".to_string();
+            } else {
+                self.message = "No moves to undo.".to_string();
+                return;
+            }
         } else {
-            self.message = "No moves to undo.".to_string();
+            // Undo both player and engine moves if possible
+            if self.move_history.len() >= 2 && self.position_history.len() >= 3 {
+                // Remove the last two moves and positions
+                self.move_history.pop();
+                self.move_history.pop();
+                self.position_history.pop();
+                self.position_history.pop();
+
+                self.message = "Undid last move pair.".to_string();
+            } else if self.move_history.len() >= 1 && self.position_history.len() >= 2 {
+                // Only one move to undo
+                self.move_history.pop();
+                self.position_history.pop();
+
+                self.message = "Undid last move.".to_string();
+            } else {
+                self.message = "No moves to undo.".to_string();
+                return;
+            }
         }
+
+        // Restore to the new last position
+        let previous_position = self.position_history.last().unwrap().clone();
+        self.game = Game::new_with_board(previous_position);
 
         self.selected_square = None;
         self.possible_moves.clear();
