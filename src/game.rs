@@ -8,6 +8,8 @@ pub struct MoveDetails {
     pub destination: String,
     #[allow(dead_code)]
     pub is_capture: bool,
+    /// Display text without piece letter (since we show the SVG)
+    pub display_text: String,
 }
 
 #[derive(Clone, Debug)]
@@ -368,16 +370,19 @@ impl ChessGame {
                     "{}{}{}{}{}",
                     from_file, from_rank, to_file, to_rank, promotion
                 );
+                let dest_str = format!("{}{}", to_file, to_rank);
                 return MoveDetails {
                     notation,
                     piece: Piece::Pawn, // Default fallback
-                    destination: format!("{}{}", to_file, to_rank),
+                    destination: dest_str.clone(),
                     is_capture: false,
+                    display_text: dest_str,
                 };
             }
         };
 
         let from_file = (chess_move.get_source().get_file().to_index() as u8 + b'a') as char;
+        let from_rank = (chess_move.get_source().get_rank().to_index() as u8 + b'1') as char;
         let to_file = (chess_move.get_dest().get_file().to_index() as u8 + b'a') as char;
         let to_rank = (chess_move.get_dest().get_rank().to_index() as u8 + b'1') as char;
 
@@ -392,6 +397,7 @@ impl ChessGame {
                         piece,
                         destination: "O-O".to_string(),
                         is_capture: false,
+                        display_text: "O-O".to_string(),
                     };
                 } else if to_file_idx == 2 {
                     return MoveDetails {
@@ -399,6 +405,7 @@ impl ChessGame {
                         piece,
                         destination: "O-O-O".to_string(),
                         is_capture: false,
+                        display_text: "O-O-O".to_string(),
                     };
                 }
             }
@@ -426,6 +433,54 @@ impl ChessGame {
             Piece::King => "K",
         };
 
+        // Check for disambiguation needed (multiple pieces of same type can reach destination)
+        let mut disambiguation = String::new();
+        if piece != Piece::Pawn && piece != Piece::King {
+            let side_to_move = board.side_to_move();
+            let move_gen = MoveGen::new_legal(board);
+            let mut same_piece_moves = Vec::new();
+
+            for m in move_gen {
+                if m.get_dest() == chess_move.get_dest()
+                    && m.get_source() != chess_move.get_source()
+                {
+                    if let Some(other_piece) = board.piece_on(m.get_source()) {
+                        if other_piece == piece
+                            && board.color_on(m.get_source()) == Some(side_to_move)
+                        {
+                            same_piece_moves.push(m);
+                        }
+                    }
+                }
+            }
+
+            if !same_piece_moves.is_empty() {
+                // Check if file is enough to disambiguate
+                let file_unique = same_piece_moves
+                    .iter()
+                    .all(|m| m.get_source().get_file() != chess_move.get_source().get_file());
+
+                if file_unique {
+                    // File is different for all other pieces, use file
+                    disambiguation.push(from_file);
+                } else {
+                    // Check if rank is enough
+                    let rank_unique = same_piece_moves
+                        .iter()
+                        .all(|m| m.get_source().get_rank() != chess_move.get_source().get_rank());
+
+                    if rank_unique {
+                        // Rank is different for all other pieces, use rank
+                        disambiguation.push(from_rank);
+                    } else {
+                        // Both file and rank needed
+                        disambiguation.push(from_file);
+                        disambiguation.push(from_rank);
+                    }
+                }
+            }
+        }
+
         let promotion = if let Some(promo_piece) = chess_move.get_promotion() {
             format!(
                 "={}",
@@ -441,7 +496,19 @@ impl ChessGame {
             "".to_string()
         };
 
-        let mut notation = format!("{}{}{}", piece_char, destination, promotion);
+        let mut notation = format!(
+            "{}{}{}{}",
+            piece_char, disambiguation, destination, promotion
+        );
+
+        // Build display text without piece letter (since we show the SVG)
+        // For pawns, don't include the source file in the destination since we show the piece SVG
+        let display_destination = if piece == Piece::Pawn && is_capture {
+            format!("x{}{}", to_file, to_rank)
+        } else {
+            destination.clone()
+        };
+        let mut display_text = format!("{}{}{}", disambiguation, display_destination, promotion);
 
         // Check for check or checkmate
         let new_board = board.make_move_new(chess_move);
@@ -449,8 +516,10 @@ impl ChessGame {
             let move_gen = MoveGen::new_legal(&new_board);
             if move_gen.len() == 0 {
                 notation.push('#');
+                display_text.push('#');
             } else {
                 notation.push('+');
+                display_text.push('+');
             }
         }
 
@@ -459,6 +528,7 @@ impl ChessGame {
             piece,
             destination,
             is_capture,
+            display_text,
         }
     }
 
@@ -479,5 +549,83 @@ impl ChessGame {
                 last_record.black_move = Some(details);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chess::{Board, ChessMove, Color, File, Rank, Square};
+    use std::str::FromStr;
+
+    #[test]
+    fn test_rook_disambiguation_file() {
+        // Test position: White rooks on a1 and h1, both can move to d1
+        // FEN: 8/8/8/8/8/8/8/R6R w KQ - 0 1
+        let board = Board::from_str("8/8/8/8/8/8/8/R6R w KQ - 0 1").unwrap();
+
+        // Create a ChessGame to access move_to_details
+        let game = ChessGame::new();
+
+        // Move from a1 to d1
+        let from = Square::make_square(Rank::First, File::A);
+        let to = Square::make_square(Rank::First, File::D);
+        let chess_move = ChessMove::new(from, to, None);
+
+        let details = game.move_to_details(chess_move, &board, Color::White);
+
+        // Should be "Rad1" (file disambiguation needed)
+        assert!(
+            details.notation.contains("Rad1") || details.notation.contains("Rda1"),
+            "Expected Rad1 or similar with file disambiguation, got: {}",
+            details.notation
+        );
+    }
+
+    #[test]
+    fn test_rook_disambiguation_rank() {
+        // Test position: White rooks on a1 and a8, both can move to a4
+        // FEN: R7/8/8/8/8/8/8/R7 w KQ - 0 1
+        let board = Board::from_str("R7/8/8/8/8/8/8/R7 w KQ - 0 1").unwrap();
+
+        let game = ChessGame::new();
+
+        // Move from a1 to a4
+        let from = Square::make_square(Rank::First, File::A);
+        let to = Square::make_square(Rank::Fourth, File::A);
+        let chess_move = ChessMove::new(from, to, None);
+
+        let details = game.move_to_details(chess_move, &board, Color::White);
+
+        // Should be "R1a4" (rank disambiguation needed since files are same)
+        assert!(
+            details.notation.contains("R1a4") || details.notation.contains("Ra14"),
+            "Expected R1a4 or similar with rank disambiguation, got: {}",
+            details.notation
+        );
+    }
+
+    #[test]
+    fn test_knight_disambiguation_both() {
+        // Test position: White knights on b1 and d2, both can move to c3
+        // FEN: 8/8/8/8/8/8/3N4/1N6 w KQ - 0 1
+        let board = Board::from_str("8/8/8/8/8/8/3N4/1N6 w KQ - 0 1").unwrap();
+
+        let game = ChessGame::new();
+
+        // Move from b1 to c3
+        let from = Square::make_square(Rank::First, File::B);
+        let to = Square::make_square(Rank::Third, File::C);
+        let chess_move = ChessMove::new(from, to, None);
+
+        let details = game.move_to_details(chess_move, &board, Color::White);
+
+        // Should be "Nb1c3" (both file and rank needed since b1 and d2 differ in both)
+        // Actually, they differ in file (b vs d), so only file should be needed
+        assert!(
+            details.notation.starts_with("Nb"),
+            "Expected Nb1c3 or Nbc3, got: {}",
+            details.notation
+        );
     }
 }

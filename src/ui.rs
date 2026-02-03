@@ -74,21 +74,29 @@ impl PieceHandles {
     }
 
     fn load_svg(path: &str) -> svg::Handle {
-        match std::fs::read(path) {
-            Ok(bytes) => {
-                println!("Loaded SVG: {}", path);
-                svg::Handle::from_memory(bytes)
-            }
-            Err(e) => {
-                eprintln!("Failed to load piece image {}: {}", path, e);
-                // Return an empty SVG as fallback
-                svg::Handle::from_memory(
+        let bytes: Vec<u8> = match path {
+            "assets/wp.svg" => include_bytes!("../assets/wp.svg").to_vec(),
+            "assets/wn.svg" => include_bytes!("../assets/wn.svg").to_vec(),
+            "assets/wb.svg" => include_bytes!("../assets/wb.svg").to_vec(),
+            "assets/wr.svg" => include_bytes!("../assets/wr.svg").to_vec(),
+            "assets/wq.svg" => include_bytes!("../assets/wq.svg").to_vec(),
+            "assets/wk.svg" => include_bytes!("../assets/wk.svg").to_vec(),
+            "assets/bp.svg" => include_bytes!("../assets/bp.svg").to_vec(),
+            "assets/bn.svg" => include_bytes!("../assets/bn.svg").to_vec(),
+            "assets/bb.svg" => include_bytes!("../assets/bb.svg").to_vec(),
+            "assets/br.svg" => include_bytes!("../assets/br.svg").to_vec(),
+            "assets/bq.svg" => include_bytes!("../assets/bq.svg").to_vec(),
+            "assets/bk.svg" => include_bytes!("../assets/bk.svg").to_vec(),
+            _ => {
+                eprintln!("Unknown SVG path: {}", path);
+                return svg::Handle::from_memory(
                     r#"<svg xmlns="http://www.w3.org/2000/svg" width="45" height="45"></svg>"#
                         .as_bytes()
                         .to_vec(),
-                )
+                );
             }
-        }
+        };
+        svg::Handle::from_memory(bytes)
     }
 
     fn get(&self, piece: Piece, color: Color) -> svg::Handle {
@@ -265,17 +273,19 @@ impl ChessUI {
     }
 
     fn load_icon(path: &str) -> svg::Handle {
-        match std::fs::read(path) {
-            Ok(bytes) => svg::Handle::from_memory(bytes),
-            Err(_) => {
-                // Return an empty SVG as fallback
-                svg::Handle::from_memory(
+        let bytes: Vec<u8> = match path {
+            "assets/reset.svg" => include_bytes!("../assets/reset.svg").to_vec(),
+            "assets/undo.svg" => include_bytes!("../assets/undo.svg").to_vec(),
+            _ => {
+                eprintln!("Unknown icon path: {}", path);
+                return svg::Handle::from_memory(
                     r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"></svg>"#
                         .as_bytes()
                         .to_vec(),
-                )
+                );
             }
-        }
+        };
+        svg::Handle::from_memory(bytes)
     }
 
     pub fn view(
@@ -478,7 +488,7 @@ impl ChessUI {
                     svg(handle)
                         .width(Length::Fixed(22.0))
                         .height(Length::Fixed(22.0)),
-                    text(white_move.destination.clone()).size(14)
+                    text(white_move.display_text.clone()).size(14)
                 ]
                 .spacing(6)
                 .align_items(Alignment::Center)
@@ -511,7 +521,7 @@ impl ChessUI {
                     svg(handle)
                         .width(Length::Fixed(22.0))
                         .height(Length::Fixed(22.0)),
-                    text(black_move.destination.clone()).size(14)
+                    text(black_move.display_text.clone()).size(14)
                 ]
                 .spacing(6)
                 .align_items(Alignment::Center)
