@@ -217,8 +217,8 @@ impl ChessUI {
         window_height: u32,
     ) -> Element<'_, Message> {
         // Calculate responsive board size based on window dimensions
-        let available_height = window_height as f32 * 0.8; // Use 80% of window height
-        let available_width = window_width as f32 * 0.6; // Use 60% of window width
+        let available_height = window_height as f32 * 0.9; // Use 90% of window height
+        let available_width = window_width as f32 * 0.7; // Use 70% of window width
         let board_size = available_height
             .min(available_width)
             .max(self.min_board_size)
@@ -269,10 +269,13 @@ impl ChessUI {
                     // Get SVG handle for the piece
                     let handle = self.piece_handles.get(piece, piece_color);
 
-                    // Add SVG to the square
-                    square_content = column![svg(handle)
-                        .width(Length::Fixed(square_size * 0.8))
-                        .height(Length::Fixed(square_size * 0.8))]
+                    // Add SVG to the square with proper centering
+                    square_content = column![
+                        Space::with_height(Length::Fixed(square_size * 0.1)),
+                        svg(handle)
+                            .width(Length::Fixed(square_size * 0.8))
+                            .height(Length::Fixed(square_size * 0.8))
+                    ]
                     .width(Length::Fixed(square_size))
                     .height(Length::Fixed(square_size))
                     .align_items(Alignment::Center);
@@ -370,7 +373,7 @@ impl ChessUI {
             .padding(20)
             .align_items(Alignment::Center),
         )
-        .width(Length::Fixed(250.0))
+        .width(Length::Fixed(280.0))
         .style(iced::theme::Container::Custom(Box::new(SidePanelStyle)));
 
         // Combine board and info panel

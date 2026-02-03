@@ -50,7 +50,7 @@ fn main() -> Result<()> {
     // Create settings for the Iced application
     let settings = Settings {
         window: window::Settings {
-            size: (1000, 600),
+            size: (1000, 700),
             position: window::Position::Centered,
             min_size: Some((640, 480)),
             max_size: None,
