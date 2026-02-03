@@ -11,7 +11,7 @@ use std::{
 use anyhow::Result;
 use clap::Parser;
 use iced::{
-    executor, window, Application, Command, Element, Event, Font, Settings, Size, Subscription, Theme,
+    executor, window, Application, Command, Element, Event, Settings, Size, Subscription, Theme,
 };
 
 use crate::engine::ChessEngine;
@@ -60,7 +60,7 @@ fn main() -> Result<()> {
             transparent: false,
             ..Default::default()
         },
-        default_font: Font::with_name("DejaVu Sans"),
+        default_font: iced::Font::with_name("Noto Sans"),
         flags: AppFlags {
             engine_path: args.engine_path,
             skill_level,

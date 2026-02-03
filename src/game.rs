@@ -1,10 +1,18 @@
 use chess::{Board, ChessMove, Color, File, Game, MoveGen, Piece, Rank, Square};
 
 #[derive(Clone, Debug)]
+pub struct MoveDetails {
+    pub notation: String,
+    pub piece: Piece,
+    pub destination: String,
+    pub is_capture: bool,
+}
+
+#[derive(Clone, Debug)]
 pub struct MoveRecord {
     pub move_num: usize,
-    pub white_move: Option<String>,
-    pub black_move: Option<String>,
+    pub white_move: Option<MoveDetails>,
+    pub black_move: Option<MoveDetails>,
 }
 
 pub struct ChessGame {
@@ -154,16 +162,16 @@ impl ChessGame {
                 .cloned();
 
             if let Some(chess_move) = possible_move {
-                // Get SAN notation BEFORE making the move (need the board position)
+                // Get move details BEFORE making the move (need the board position)
                 // White is moving (player's turn)
-                let san = self.move_to_san(chess_move, &board, Color::White);
+                let details = self.move_to_details(chess_move, &board, Color::White);
 
                 if self.game.make_move(chess_move) {
                     // Save position after making the move
                     self.position_history.push(self.game.current_position());
 
-                    // Record the move with SAN notation
-                    self.record_move(san, self.game.current_position());
+                    // Record the move
+                    self.record_move(details);
 
                     self.message = format!("Move: {}", chess_move);
                     self.selected_square = None;
@@ -253,17 +261,16 @@ impl ChessGame {
                 };
 
                 if promotion.is_none() || m.get_promotion() == promotion {
-                    // Get SAN notation BEFORE making the move
-                    // Determine which color is moving based on current side to move
+                    // Get move details BEFORE making the move
                     let side_to_move = board.side_to_move();
-                    let san = self.move_to_san(m, &board, side_to_move);
+                    let details = self.move_to_details(m, &board, side_to_move);
 
                     if self.game.make_move(m) {
                         // Save position after making the move
                         self.position_history.push(self.game.current_position());
 
-                        // Record the move with SAN notation
-                        self.record_move(san, self.game.current_position());
+                        // Record the move
+                        self.record_move(details);
 
                         self.message = format!("Engine moved: {}", uci_move);
                         self.thinking = false;
@@ -332,8 +339,8 @@ impl ChessGame {
         self.game.result()
     }
 
-    fn move_to_san(&self, chess_move: ChessMove, board: &Board, side: Color) -> String {
-        // Get the piece that moved - if not found, return UCI notation
+    fn move_to_details(&self, chess_move: ChessMove, board: &Board, side: Color) -> MoveDetails {
+        // Get the piece that moved
         let piece = match board.piece_on(chess_move.get_source()) {
             Some(p) => p,
             None => {
@@ -355,30 +362,20 @@ impl ChessGame {
                 } else {
                     ""
                 };
-                return format!(
+                let notation = format!(
                     "{}{}{}{}{}",
                     from_file, from_rank, to_file, to_rank, promotion
                 );
+                return MoveDetails {
+                    notation,
+                    piece: Piece::Pawn, // Default fallback
+                    destination: format!("{}{}", to_file, to_rank),
+                    is_capture: false,
+                };
             }
         };
 
-        // Unicode chess piece characters - different for White and Black
-        let piece_char = match (piece, side) {
-            (Piece::Pawn, _) => "",
-            (Piece::Knight, Color::White) => "♘",
-            (Piece::Knight, Color::Black) => "♞",
-            (Piece::Bishop, Color::White) => "♗",
-            (Piece::Bishop, Color::Black) => "♝",
-            (Piece::Rook, Color::White) => "♖",
-            (Piece::Rook, Color::Black) => "♜",
-            (Piece::Queen, Color::White) => "♕",
-            (Piece::Queen, Color::Black) => "♛",
-            (Piece::King, Color::White) => "♔",
-            (Piece::King, Color::Black) => "♚",
-        };
-
         let from_file = (chess_move.get_source().get_file().to_index() as u8 + b'a') as char;
-        let _from_rank = (chess_move.get_source().get_rank().to_index() as u8 + b'1') as char;
         let to_file = (chess_move.get_dest().get_file().to_index() as u8 + b'a') as char;
         let to_rank = (chess_move.get_dest().get_rank().to_index() as u8 + b'1') as char;
 
@@ -386,41 +383,55 @@ impl ChessGame {
         if piece == Piece::King {
             let from_file_idx = chess_move.get_source().get_file().to_index();
             let to_file_idx = chess_move.get_dest().get_file().to_index();
-            // King moves from e-file (index 4) to g-file (index 6) for kingside
-            // or to c-file (index 2) for queenside
             if from_file_idx == 4 {
                 if to_file_idx == 6 {
-                    return "O-O".to_string();
+                    return MoveDetails {
+                        notation: "O-O".to_string(),
+                        piece,
+                        destination: "O-O".to_string(),
+                        is_capture: false,
+                    };
                 } else if to_file_idx == 2 {
-                    return "O-O-O".to_string();
+                    return MoveDetails {
+                        notation: "O-O-O".to_string(),
+                        piece,
+                        destination: "O-O-O".to_string(),
+                        is_capture: false,
+                    };
                 }
             }
         }
 
         let is_capture = board.piece_on(chess_move.get_dest()).is_some();
 
-        let capture = if is_capture {
-            if piece == Piece::Pawn {
-                format!("{}x", from_file)
-            } else {
-                "x".to_string()
-            }
+        // Build destination string (capture symbol + destination square)
+        let capture_symbol = if is_capture { "x" } else { "" };
+        let destination = if piece == Piece::Pawn && is_capture {
+            // Pawn capture: file + "x" + destination
+            format!("{}x{}{}", from_file, to_file, to_rank)
         } else {
-            "".to_string()
+            // Other moves: capture symbol + destination
+            format!("{}{}{}", capture_symbol, to_file, to_rank)
+        };
+
+        // Build full notation with piece letter
+        let piece_char = match piece {
+            Piece::Pawn => "",
+            Piece::Knight => "N",
+            Piece::Bishop => "B",
+            Piece::Rook => "R",
+            Piece::Queen => "Q",
+            Piece::King => "K",
         };
 
         let promotion = if let Some(promo_piece) = chess_move.get_promotion() {
             format!(
                 "={}",
-                match (promo_piece, side) {
-                    (Piece::Queen, Color::White) => "♕",
-                    (Piece::Queen, Color::Black) => "♛",
-                    (Piece::Rook, Color::White) => "♖",
-                    (Piece::Rook, Color::Black) => "♜",
-                    (Piece::Bishop, Color::White) => "♗",
-                    (Piece::Bishop, Color::Black) => "♝",
-                    (Piece::Knight, Color::White) => "♘",
-                    (Piece::Knight, Color::Black) => "♞",
+                match promo_piece {
+                    Piece::Queen => "Q",
+                    Piece::Rook => "R",
+                    Piece::Bishop => "B",
+                    Piece::Knight => "N",
                     _ => "",
                 }
             )
@@ -428,41 +439,28 @@ impl ChessGame {
             "".to_string()
         };
 
-        let mut san = if piece == Piece::Pawn && !is_capture {
-            // Pawn move without capture: just the destination square
-            format!("{}{}{}", to_file, to_rank, promotion)
-        } else {
-            // Piece move or pawn capture: piece symbol + capture + destination
-            format!(
-                "{}{}{}{}{}",
-                piece_char,
-                if piece == Piece::Pawn { "" } else { "" },
-                capture,
-                to_file,
-                to_rank
-            )
-        };
-
-        // Add promotion if not already added
-        if !promotion.is_empty() && !san.contains('=') {
-            san.push_str(&promotion);
-        }
+        let mut notation = format!("{}{}{}", piece_char, destination, promotion);
 
         // Check for check or checkmate
         let new_board = board.make_move_new(chess_move);
         if new_board.checkers().popcnt() > 0 {
             let move_gen = MoveGen::new_legal(&new_board);
             if move_gen.len() == 0 {
-                san.push('#');
+                notation.push('#');
             } else {
-                san.push('+');
+                notation.push('+');
             }
         }
 
-        san
+        MoveDetails {
+            notation,
+            piece,
+            destination,
+            is_capture,
+        }
     }
 
-    fn record_move(&mut self, san: String, _position: Board) {
+    fn record_move(&mut self, details: MoveDetails) {
         let current_side = self.game.side_to_move();
 
         if current_side == Color::Black {
@@ -470,13 +468,13 @@ impl ChessGame {
             let move_num = self.move_records.len() + 1;
             self.move_records.push(MoveRecord {
                 move_num,
-                white_move: Some(san),
+                white_move: Some(details),
                 black_move: None,
             });
         } else {
             // Black just moved, update last record
             if let Some(last_record) = self.move_records.last_mut() {
-                last_record.black_move = Some(san);
+                last_record.black_move = Some(details);
             }
         }
     }

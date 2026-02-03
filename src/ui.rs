@@ -107,6 +107,29 @@ impl PieceHandles {
             (Piece::King, Color::Black) => self.black_king.clone(),
         }
     }
+
+    // Parse piece from SAN notation
+    fn parse_piece_from_san(&self, san: &str, side: Color) -> Option<(Piece, svg::Handle)> {
+        if san.starts_with("O-O") {
+            // Castling - use King
+            return Some((Piece::King, self.get(Piece::King, side)));
+        }
+
+        // Check first character for piece indicator
+        let first_char = san.chars().next()?;
+
+        let piece = match first_char {
+            'N' | '♘' | '♞' => Piece::Knight,
+            'B' | '♗' | '♝' => Piece::Bishop,
+            'R' | '♖' | '♜' => Piece::Rook,
+            'Q' | '♕' | '♛' => Piece::Queen,
+            'K' | '♔' | '♚' => Piece::King,
+            'a'..='h' => Piece::Pawn, // Pawn moves start with file letter
+            _ => return None,
+        };
+
+        Some((piece, self.get(piece, side)))
+    }
 }
 
 // Custom style for chess squares
@@ -202,11 +225,11 @@ impl iced::widget::button::StyleSheet for MoveHistoryButtonStyle {
             }
         } else {
             Appearance {
-                background: Some(IcedColor::from_rgb(0.25, 0.25, 0.25).into()),
+                background: Some(IcedColor::from_rgb(0.4, 0.4, 0.4).into()),
                 border_radius: 4.0.into(),
                 border_width: 0.0,
                 border_color: IcedColor::TRANSPARENT,
-                text_color: IcedColor::from_rgb(0.8, 0.8, 0.8),
+                text_color: IcedColor::from_rgb(0.9, 0.9, 0.9),
                 ..Default::default()
             }
         }
@@ -214,7 +237,7 @@ impl iced::widget::button::StyleSheet for MoveHistoryButtonStyle {
 
     fn hovered(&self, _style: &Self::Style) -> Appearance {
         Appearance {
-            background: Some(IcedColor::from_rgb(0.35, 0.35, 0.35).into()),
+            background: Some(IcedColor::from_rgb(0.5, 0.5, 0.5).into()),
             border_radius: 4.0.into(),
             border_width: 0.0,
             border_color: IcedColor::TRANSPARENT,
@@ -450,7 +473,7 @@ impl ChessUI {
 
         // Fixed widths for columns: move number, white move, black move
         let move_num_width = 35.0;
-        let move_btn_width = 70.0;
+        let move_btn_width = 100.0;
 
         for record in move_records {
             let mut move_row = row![];
@@ -467,52 +490,66 @@ impl ChessUI {
                 .center_y(),
             );
 
-            // White move button column (fixed width, centered text)
+            // White move button column (fixed width, with piece SVG)
             let white_btn: Element<'_, Message> = if let Some(ref white_move) = record.white_move {
                 let white_index = record.move_num * 2 - 1;
                 let is_white_active = is_view_mode && view_move_index == white_index;
 
-                button(
-                    container(text(white_move.clone()).size(16))
-                        .width(Length::Fill)
-                        .center_x()
-                        .center_y(),
-                )
-                .on_press(Message::ViewMove(white_index))
-                .padding([4, 8])
-                .width(Length::Fixed(move_btn_width))
-                .style(iced::theme::Button::Custom(Box::new(
-                    MoveHistoryButtonStyle {
-                        is_active: is_white_active,
-                    },
-                )))
-                .into()
+                // Get piece SVG for this move
+                let handle = self.piece_handles.get(white_move.piece, Color::White);
+                let piece_content: Element<'_, Message> = row![
+                    svg(handle)
+                        .width(Length::Fixed(22.0))
+                        .height(Length::Fixed(22.0)),
+                    text(white_move.destination.clone()).size(14)
+                ]
+                .spacing(6)
+                .align_items(Alignment::Center)
+                .into();
+
+                button(container(piece_content).width(Length::Fill).center_y())
+                    .on_press(Message::ViewMove(white_index))
+                    .padding([4, 8])
+                    .width(Length::Fixed(move_btn_width))
+                    .style(iced::theme::Button::Custom(Box::new(
+                        MoveHistoryButtonStyle {
+                            is_active: is_white_active,
+                        },
+                    )))
+                    .into()
             } else {
                 // Empty placeholder to maintain alignment
                 Space::with_width(Length::Fixed(move_btn_width)).into()
             };
             move_row = move_row.push(white_btn);
 
-            // Black move button column (fixed width, centered text)
+            // Black move button column (fixed width, with piece SVG)
             let black_btn: Element<'_, Message> = if let Some(ref black_move) = record.black_move {
                 let black_index = record.move_num * 2;
                 let is_black_active = is_view_mode && view_move_index == black_index;
 
-                button(
-                    container(text(black_move.clone()).size(16))
-                        .width(Length::Fill)
-                        .center_x()
-                        .center_y(),
-                )
-                .on_press(Message::ViewMove(black_index))
-                .padding([4, 8])
-                .width(Length::Fixed(move_btn_width))
-                .style(iced::theme::Button::Custom(Box::new(
-                    MoveHistoryButtonStyle {
-                        is_active: is_black_active,
-                    },
-                )))
-                .into()
+                // Get piece SVG for this move
+                let handle = self.piece_handles.get(black_move.piece, Color::Black);
+                let piece_content: Element<'_, Message> = row![
+                    svg(handle)
+                        .width(Length::Fixed(22.0))
+                        .height(Length::Fixed(22.0)),
+                    text(black_move.destination.clone()).size(14)
+                ]
+                .spacing(6)
+                .align_items(Alignment::Center)
+                .into();
+
+                button(container(piece_content).width(Length::Fill).center_y())
+                    .on_press(Message::ViewMove(black_index))
+                    .padding([4, 8])
+                    .width(Length::Fixed(move_btn_width))
+                    .style(iced::theme::Button::Custom(Box::new(
+                        MoveHistoryButtonStyle {
+                            is_active: is_black_active,
+                        },
+                    )))
+                    .into()
             } else {
                 // Empty placeholder to maintain alignment
                 Space::with_width(Length::Fixed(move_btn_width)).into()
