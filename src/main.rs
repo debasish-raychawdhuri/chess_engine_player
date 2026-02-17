@@ -100,6 +100,7 @@ pub enum Message {
     SquareClicked(chess::Square),
     ResetGame,
     UndoMove,
+    FlipSide,
     EngineMoved(String),
     CheckEngineMove,
     Tick,
@@ -293,6 +294,41 @@ impl Application for ChessApp {
                     );
                 }
                 
+                Command::none()
+            }
+
+            Message::FlipSide => {
+                // Flip the player's side
+                let needs_engine_move = if let Ok(mut game) = self.game.lock() {
+                    game.flip_side();
+                    // Check if it's now the engine's turn
+                    game.current_position().side_to_move() != game.player_color()
+                } else {
+                    false
+                };
+
+                // If it's the engine's turn, trigger engine move
+                if needs_engine_move {
+                    self.engine_thinking = true;
+                    if let Ok(mut game) = self.game.lock() {
+                        game.set_thinking(true);
+                    }
+                    let engine_clone = Arc::clone(&self.engine);
+                    let game_clone = Arc::clone(&self.game);
+
+                    return Command::perform(
+                        async move {
+                            if let Ok(game) = game_clone.lock() {
+                                if let Ok(mut engine) = engine_clone.lock() {
+                                    let fen = game.current_position().to_string();
+                                    let _ = engine.get_move(&fen);
+                                }
+                            }
+                        },
+                        |_| Message::CheckEngineMove,
+                    );
+                }
+
                 Command::none()
             }
 

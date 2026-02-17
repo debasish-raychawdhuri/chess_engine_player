@@ -23,6 +23,7 @@ pub struct ChessUI {
     piece_handles: PieceHandles,
     reset_icon: svg::Handle,
     undo_icon: svg::Handle,
+    flip_icon: svg::Handle,
 }
 
 // Structure to hold SVG handles for chess pieces
@@ -269,6 +270,7 @@ impl ChessUI {
             piece_handles: PieceHandles::new(),
             reset_icon: Self::load_icon("assets/reset.svg"),
             undo_icon: Self::load_icon("assets/undo.svg"),
+            flip_icon: Self::load_icon("assets/flip.svg"),
         }
     }
 
@@ -276,6 +278,7 @@ impl ChessUI {
         let bytes: Vec<u8> = match path {
             "assets/reset.svg" => include_bytes!("../assets/reset.svg").to_vec(),
             "assets/undo.svg" => include_bytes!("../assets/undo.svg").to_vec(),
+            "assets/flip.svg" => include_bytes!("../assets/flip.svg").to_vec(),
             _ => {
                 eprintln!("Unknown icon path: {}", path);
                 return svg::Handle::from_memory(
@@ -448,8 +451,22 @@ impl ChessUI {
         .padding(10)
         .style(iced::theme::Button::Custom(Box::new(RoundedButtonStyle)));
 
+        let flip_button = button(
+            row![
+                svg(self.flip_icon.clone())
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0)),
+                text("Flip")
+            ]
+            .spacing(5)
+            .align_items(Alignment::Center),
+        )
+        .on_press(Message::FlipSide)
+        .padding(10)
+        .style(iced::theme::Button::Custom(Box::new(RoundedButtonStyle)));
+
         // Create the layout
-        let controls = row![reset_button, undo_button]
+        let controls = row![reset_button, undo_button, flip_button]
             .spacing(10)
             .padding(10)
             .align_items(Alignment::Center);

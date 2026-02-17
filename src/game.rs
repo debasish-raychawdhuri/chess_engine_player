@@ -137,6 +137,22 @@ impl ChessGame {
         );
     }
 
+    pub fn flip_side(&mut self) {
+        self.player_color = if self.player_color == Color::White {
+            Color::Black
+        } else {
+            Color::White
+        };
+        self.message = format!(
+            "You are playing as {}.",
+            if self.player_color == Color::White {
+                "White"
+            } else {
+                "Black"
+            }
+        );
+    }
+
     pub fn set_thinking(&mut self, thinking: bool) {
         self.thinking = thinking;
         if thinking {
