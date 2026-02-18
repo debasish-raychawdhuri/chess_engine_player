@@ -6,7 +6,7 @@ use iced::{
     Alignment, Color as IcedColor, Element, Length,
 };
 
-use crate::game::MoveRecord;
+use crate::game::{MoveRecord, PromotionPiece};
 use crate::Message;
 
 // Colors for the chess board
@@ -262,6 +262,35 @@ impl iced::widget::button::StyleSheet for ExitViewButtonStyle {
     }
 }
 
+// Custom style for promotion buttons
+struct PromotionButtonStyle;
+
+impl iced::widget::button::StyleSheet for PromotionButtonStyle {
+    type Style = iced::Theme;
+
+    fn active(&self, _style: &Self::Style) -> Appearance {
+        Appearance {
+            background: Some(IcedColor::from_rgb(0.2, 0.2, 0.2).into()),
+            border_radius: 4.0.into(),
+            border_width: 2.0,
+            border_color: IcedColor::from_rgb(0.6, 0.6, 0.6),
+            text_color: IcedColor::WHITE,
+            ..Default::default()
+        }
+    }
+
+    fn hovered(&self, _style: &Self::Style) -> Appearance {
+        Appearance {
+            background: Some(IcedColor::from_rgb(0.3, 0.3, 0.3).into()),
+            border_radius: 4.0.into(),
+            border_width: 2.0,
+            border_color: IcedColor::from_rgb(0.8, 0.8, 0.8),
+            text_color: IcedColor::WHITE,
+            ..Default::default()
+        }
+    }
+}
+
 impl ChessUI {
     pub fn new() -> Self {
         ChessUI {
@@ -305,6 +334,7 @@ impl ChessUI {
         move_records: &[MoveRecord],
         is_view_mode: bool,
         view_move_index: usize,
+        pending_promotion: Option<(Square, Square)>,
     ) -> Element<'_, Message> {
         // Calculate responsive board size based on window dimensions
         let available_height = window_height as f32 * 0.9; // Use 90% of window height
@@ -621,17 +651,101 @@ impl ChessUI {
             .width(Length::Fixed(320.0))
             .style(iced::theme::Container::Custom(Box::new(SidePanelStyle)));
 
-        // Combine board and info panel
-        let content = row![board_view, info_panel,]
-            .spacing(20)
-            .padding([10, 20])
-            .align_items(Alignment::Center);
+        // Promotion dialog
+        let promotion_overlay: Option<Element<'_, Message>> = if pending_promotion.is_some() {
+            let promotion_buttons: Element<'_, Message> = row![
+                button(
+                    svg(self.piece_handles.get(Piece::Queen, player_color).clone())
+                        .width(Length::Fixed(40.0))
+                        .height(Length::Fixed(40.0))
+                )
+                .on_press(Message::PromotePawn(PromotionPiece::Queen))
+                .padding(5)
+                .style(iced::theme::Button::Custom(Box::new(PromotionButtonStyle))),
+                button(
+                    svg(self.piece_handles.get(Piece::Rook, player_color).clone())
+                        .width(Length::Fixed(40.0))
+                        .height(Length::Fixed(40.0))
+                )
+                .on_press(Message::PromotePawn(PromotionPiece::Rook))
+                .padding(5)
+                .style(iced::theme::Button::Custom(Box::new(PromotionButtonStyle))),
+                button(
+                    svg(self.piece_handles.get(Piece::Bishop, player_color).clone())
+                        .width(Length::Fixed(40.0))
+                        .height(Length::Fixed(40.0))
+                )
+                .on_press(Message::PromotePawn(PromotionPiece::Bishop))
+                .padding(5)
+                .style(iced::theme::Button::Custom(Box::new(PromotionButtonStyle))),
+                button(
+                    svg(self.piece_handles.get(Piece::Knight, player_color).clone())
+                        .width(Length::Fixed(40.0))
+                        .height(Length::Fixed(40.0))
+                )
+                .on_press(Message::PromotePawn(PromotionPiece::Knight))
+                .padding(5)
+                .style(iced::theme::Button::Custom(Box::new(PromotionButtonStyle))),
+            ]
+            .spacing(10)
+            .padding(15)
+            .into();
 
-        container(content)
+            let promotion_dialog = container(
+                column![
+                    text("Promote to:").size(18).style(IcedColor::WHITE),
+                    Space::with_height(Length::Fixed(10.0)),
+                    promotion_buttons,
+                ]
+                .align_items(Alignment::Center),
+            )
+            .style(iced::theme::Container::Custom(Box::new(SidePanelStyle)))
+            .width(Length::Fixed(220.0))
+            .center_x()
+            .center_y();
+
+            Some(
+                container(promotion_dialog)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(iced::theme::Container::Box)
+                    .into(),
+            )
+        } else {
+            None
+        };
+
+        // Combine board and info panel
+        let content = if let Some(overlay) = promotion_overlay {
+            container(
+                column![
+                    row![board_view, info_panel,]
+                        .spacing(20)
+                        .padding([10, 20])
+                        .align_items(Alignment::Center),
+                    overlay,
+                ]
+                .height(Length::Fill),
+            )
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x()
             .center_y()
             .into()
+        } else {
+            container(
+                row![board_view, info_panel,]
+                    .spacing(20)
+                    .padding([10, 20])
+                    .align_items(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x()
+            .center_y()
+            .into()
+        };
+
+        content
     }
 }

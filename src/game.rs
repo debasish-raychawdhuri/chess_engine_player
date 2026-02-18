@@ -5,6 +5,7 @@ pub struct MoveDetails {
     #[allow(dead_code)]
     pub notation: String,
     pub piece: Piece,
+    #[allow(dead_code)]
     pub destination: String,
     #[allow(dead_code)]
     pub is_capture: bool,
@@ -19,6 +20,14 @@ pub struct MoveRecord {
     pub black_move: Option<MoveDetails>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PromotionPiece {
+    Queen,
+    Rook,
+    Bishop,
+    Knight,
+}
+
 pub struct ChessGame {
     game: Game,
     selected_square: Option<Square>,
@@ -31,6 +40,7 @@ pub struct ChessGame {
     move_records: Vec<MoveRecord>,
     view_mode: bool,
     view_move_index: usize,
+    pending_promotion: Option<(Square, Square)>,
 }
 
 impl ChessGame {
@@ -47,6 +57,7 @@ impl ChessGame {
             move_records: Vec::new(),
             view_mode: false,
             view_move_index: 0,
+            pending_promotion: None,
         };
 
         // Save initial position
@@ -66,6 +77,7 @@ impl ChessGame {
         self.move_records.clear();
         self.view_mode = false;
         self.view_move_index = 0;
+        self.pending_promotion = None;
         self.position_history.push(self.game.current_position());
     }
 
@@ -125,6 +137,10 @@ impl ChessGame {
         self.player_color
     }
 
+    pub fn pending_promotion(&self) -> Option<(Square, Square)> {
+        self.pending_promotion
+    }
+
     pub fn set_player_color(&mut self, color: Color) {
         self.player_color = color;
         self.message = format!(
@@ -182,6 +198,17 @@ impl ChessGame {
                 .cloned();
 
             if let Some(chess_move) = possible_move {
+                // Check if this is a promotion move without promotion specified
+                let needs_promotion = chess_move.get_promotion().is_none()
+                    && self.is_pawn_promotion_move(&chess_move, &board);
+
+                if needs_promotion {
+                    // Set pending promotion - don't make the move yet
+                    self.pending_promotion = Some((chess_move.get_source(), chess_move.get_dest()));
+                    self.message = "Select promotion piece".to_string();
+                    return true;
+                }
+
                 // Get move details BEFORE making the move (need the board position)
                 // White is moving (player's turn)
                 let details = self.move_to_details(chess_move, &board, Color::White);
@@ -225,6 +252,45 @@ impl ChessGame {
             }
         }
 
+        false
+    }
+
+    fn is_pawn_promotion_move(&self, chess_move: &ChessMove, board: &Board) -> bool {
+        if let Some(piece) = board.piece_on(chess_move.get_source()) {
+            if piece == Piece::Pawn {
+                let dest_rank = chess_move.get_dest().get_rank();
+                // White pawn promotes on rank 8, black pawn on rank 1
+                return (board.side_to_move() == Color::White && dest_rank == Rank::Eighth)
+                    || (board.side_to_move() == Color::Black && dest_rank == Rank::First);
+            }
+        }
+        false
+    }
+
+    pub fn promote_pawn(&mut self, promotion_piece: PromotionPiece) -> bool {
+        if let Some((from, to)) = self.pending_promotion.take() {
+            let promotion = match promotion_piece {
+                PromotionPiece::Queen => Some(Piece::Queen),
+                PromotionPiece::Rook => Some(Piece::Rook),
+                PromotionPiece::Bishop => Some(Piece::Bishop),
+                PromotionPiece::Knight => Some(Piece::Knight),
+            };
+
+            let chess_move = ChessMove::new(from, to, promotion);
+            let board = self.game.current_position();
+            let details = self.move_to_details(chess_move, &board, Color::White);
+
+            if self.game.make_move(chess_move) {
+                self.position_history.push(self.game.current_position());
+                self.record_move(details);
+                self.message = format!("Move: {}", chess_move);
+                self.selected_square = None;
+                self.possible_moves.clear();
+                self.move_history.push(chess_move);
+                self.view_move_index = self.position_history.len() - 1;
+                return true;
+            }
+        }
         false
     }
 

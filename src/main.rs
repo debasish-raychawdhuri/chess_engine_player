@@ -15,7 +15,7 @@ use iced::{
 };
 
 use crate::engine::ChessEngine;
-use crate::game::ChessGame;
+use crate::game::{ChessGame, PromotionPiece};
 use crate::ui::ChessUI;
 
 /// A GUI chess game that allows playing against UCI-compatible chess engines
@@ -108,6 +108,7 @@ pub enum Message {
     ViewMove(usize),
     ExitViewMode,
     ScrollToBottom,
+    PromotePawn(PromotionPiece),
 }
 
 impl Application for ChessApp {
@@ -391,6 +392,34 @@ impl Application for ChessApp {
                 Command::none()
             }
 
+            Message::PromotePawn(promotion_piece) => {
+                if let Ok(mut game) = self.game.lock() {
+                    if game.promote_pawn(promotion_piece) {
+                        // Move was made, get engine response
+                        if game.game_result().is_none() {
+                            self.engine_thinking = true;
+                            game.set_thinking(true);
+
+                            let engine_clone = Arc::clone(&self.engine);
+                            let game_clone = Arc::clone(&self.game);
+
+                            return Command::perform(
+                                async move {
+                                    if let Ok(game) = game_clone.lock() {
+                                        if let Ok(mut engine) = engine_clone.lock() {
+                                            let fen = game.current_position().to_string();
+                                            let _ = engine.get_move(&fen);
+                                        }
+                                    }
+                                },
+                                |_| Message::CheckEngineMove,
+                            );
+                        }
+                    }
+                }
+                Command::none()
+            }
+
             Message::ScrollToBottom => {
                 // Scroll move history to bottom - handled by the command
                 Command::none()
@@ -412,6 +441,7 @@ impl Application for ChessApp {
                 game.get_move_records().clone(),
                 game.is_view_mode(),
                 game.view_move_index(),
+                game.pending_promotion(),
             )
         } else {
             // Default state if lock fails
@@ -426,6 +456,7 @@ impl Application for ChessApp {
                 Vec::new(),
                 false,
                 0,
+                None,
             )
         };
 
@@ -443,6 +474,7 @@ impl Application for ChessApp {
             &game_state.7,
             game_state.8,
             game_state.9,
+            game_state.10,
         )
     }
 
