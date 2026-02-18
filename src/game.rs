@@ -81,6 +81,30 @@ impl ChessGame {
         self.position_history.push(self.game.current_position());
     }
 
+    pub fn reset_from_fen(&mut self, fen: &str, player_color: Color) {
+        use std::str::FromStr;
+        match Board::from_str(fen) {
+            Ok(board) => {
+                self.game = Game::new_with_board(board);
+                self.player_color = player_color;
+                self.selected_square = None;
+                self.possible_moves.clear();
+                self.message = String::from("Custom position loaded. Make a move to begin.");
+                self.thinking = false;
+                self.move_history.clear();
+                self.position_history.clear();
+                self.move_records.clear();
+                self.view_mode = false;
+                self.view_move_index = 0;
+                self.pending_promotion = None;
+                self.position_history.push(board);
+            }
+            Err(e) => {
+                eprintln!("Failed to load position from FEN: {:?}", e);
+            }
+        }
+    }
+
     pub fn current_position(&self) -> chess::Board {
         if self.view_mode {
             self.position_history[self.view_move_index]
@@ -198,9 +222,13 @@ impl ChessGame {
                 .cloned();
 
             if let Some(chess_move) = possible_move {
-                // Check if this is a promotion move without promotion specified
-                let needs_promotion = chess_move.get_promotion().is_none()
-                    && self.is_pawn_promotion_move(&chess_move, &board);
+                // MoveGen always produces promotion moves *with* the piece
+                // already set (four variants: Q/R/B/N), so get_promotion()
+                // is never None for a promotion move.  Detect by checking
+                // either the promotion field or the pawn-reaching-back-rank
+                // condition so the dialog always fires.
+                let needs_promotion = chess_move.get_promotion().is_some()
+                    || self.is_pawn_promotion_move(&chess_move, &board);
 
                 if needs_promotion {
                     // Set pending promotion - don't make the move yet

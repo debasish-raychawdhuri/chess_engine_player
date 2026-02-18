@@ -4,7 +4,9 @@ mod game;
 mod ui;
 
 use std::{
+    collections::HashMap,
     path::PathBuf,
+    str::FromStr,
     sync::{Arc, Mutex},
 };
 
@@ -17,6 +19,248 @@ use iced::{
 use crate::engine::ChessEngine;
 use crate::game::{ChessGame, PromotionPiece};
 use crate::ui::ChessUI;
+
+// ─── Position Setup State ─────────────────────────────────────────────────────
+
+pub struct SetupState {
+    pub pieces: HashMap<chess::Square, (chess::Piece, chess::Color)>,
+    pub selected_palette: Option<(chess::Piece, chess::Color)>,
+    pub side_to_move: chess::Color,
+    pub castle_wk: bool,
+    pub castle_wq: bool,
+    pub castle_bk: bool,
+    pub castle_bq: bool,
+    pub en_passant_file: Option<chess::File>,
+    pub fen_string: String,
+    pub fen_error: Option<String>,
+    pub player_color: chess::Color,
+}
+
+pub enum AppScreen {
+    Game,
+    Setup(SetupState),
+}
+
+impl SetupState {
+    pub fn from_board(board: &chess::Board, player_color: chess::Color) -> Self {
+        let mut pieces = HashMap::new();
+        for rank_idx in 0..8usize {
+            for file_idx in 0..8usize {
+                let sq = chess::Square::make_square(
+                    chess::Rank::from_index(rank_idx),
+                    chess::File::from_index(file_idx),
+                );
+                if let Some(piece) = board.piece_on(sq) {
+                    let color = board.color_on(sq).unwrap();
+                    pieces.insert(sq, (piece, color));
+                }
+            }
+        }
+
+        let fen = board.to_string();
+        let parts: Vec<&str> = fen.split_whitespace().collect();
+        let castling_str = parts.get(2).copied().unwrap_or("-");
+        let castle_wk = castling_str.contains('K');
+        let castle_wq = castling_str.contains('Q');
+        let castle_bk = castling_str.contains('k');
+        let castle_bq = castling_str.contains('q');
+
+        let en_passant_file = parts.get(3).and_then(|s| {
+            if *s == "-" {
+                return None;
+            }
+            s.chars().next().and_then(|c| {
+                let idx = (c as u8).wrapping_sub(b'a') as usize;
+                if idx < 8 {
+                    Some(chess::File::from_index(idx))
+                } else {
+                    None
+                }
+            })
+        });
+
+        let side_to_move = board.side_to_move();
+
+        SetupState {
+            pieces,
+            selected_palette: Some((chess::Piece::Pawn, chess::Color::White)),
+            side_to_move,
+            castle_wk,
+            castle_wq,
+            castle_bk,
+            castle_bq,
+            en_passant_file,
+            fen_string: fen,
+            fen_error: None,
+            player_color,
+        }
+    }
+
+    pub fn rebuild_fen(&mut self) {
+        let mut placement = String::new();
+        for rank_idx in (0..8usize).rev() {
+            let mut empty: u8 = 0;
+            for file_idx in 0..8usize {
+                let sq = chess::Square::make_square(
+                    chess::Rank::from_index(rank_idx),
+                    chess::File::from_index(file_idx),
+                );
+                if let Some((piece, color)) = self.pieces.get(&sq) {
+                    if empty > 0 {
+                        placement.push((b'0' + empty) as char);
+                        empty = 0;
+                    }
+                    let c = match (*piece, *color) {
+                        (chess::Piece::King,   chess::Color::White) => 'K',
+                        (chess::Piece::Queen,  chess::Color::White) => 'Q',
+                        (chess::Piece::Rook,   chess::Color::White) => 'R',
+                        (chess::Piece::Bishop, chess::Color::White) => 'B',
+                        (chess::Piece::Knight, chess::Color::White) => 'N',
+                        (chess::Piece::Pawn,   chess::Color::White) => 'P',
+                        (chess::Piece::King,   chess::Color::Black) => 'k',
+                        (chess::Piece::Queen,  chess::Color::Black) => 'q',
+                        (chess::Piece::Rook,   chess::Color::Black) => 'r',
+                        (chess::Piece::Bishop, chess::Color::Black) => 'b',
+                        (chess::Piece::Knight, chess::Color::Black) => 'n',
+                        (chess::Piece::Pawn,   chess::Color::Black) => 'p',
+                    };
+                    placement.push(c);
+                } else {
+                    empty += 1;
+                }
+            }
+            if empty > 0 {
+                placement.push((b'0' + empty) as char);
+            }
+            if rank_idx > 0 {
+                placement.push('/');
+            }
+        }
+
+        let stm = if self.side_to_move == chess::Color::White { "w" } else { "b" };
+
+        // Only include a castling right in the FEN when the relevant king and
+        // rook are still on their starting squares; otherwise the chess crate
+        // will reject the position as structurally invalid.
+        let sq = |rank: usize, file: usize| {
+            chess::Square::make_square(
+                chess::Rank::from_index(rank),
+                chess::File::from_index(file),
+            )
+        };
+        let has = |s: chess::Square, p: chess::Piece, c: chess::Color| {
+            self.pieces.get(&s) == Some(&(p, c))
+        };
+        let wk_home = has(sq(0, 4), chess::Piece::King, chess::Color::White);
+        let bk_home = has(sq(7, 4), chess::Piece::King, chess::Color::Black);
+        let eff_wk = self.castle_wk && wk_home && has(sq(0, 7), chess::Piece::Rook, chess::Color::White);
+        let eff_wq = self.castle_wq && wk_home && has(sq(0, 0), chess::Piece::Rook, chess::Color::White);
+        let eff_bk = self.castle_bk && bk_home && has(sq(7, 7), chess::Piece::Rook, chess::Color::Black);
+        let eff_bq = self.castle_bq && bk_home && has(sq(7, 0), chess::Piece::Rook, chess::Color::Black);
+
+        let mut castling = String::new();
+        if eff_wk { castling.push('K'); }
+        if eff_wq { castling.push('Q'); }
+        if eff_bk { castling.push('k'); }
+        if eff_bq { castling.push('q'); }
+        if castling.is_empty() { castling.push('-'); }
+
+        let ep = match self.en_passant_file {
+            Some(file) => {
+                let file_char = (b'a' + file.to_index() as u8) as char;
+                let rank_char = if self.side_to_move == chess::Color::White { '6' } else { '3' };
+                format!("{}{}", file_char, rank_char)
+            }
+            None => "-".to_string(),
+        };
+
+        self.fen_string = format!("{} {} {} {} 0 1", placement, stm, castling, ep);
+
+        self.fen_error = safe_parse_board(&self.fen_string).err();
+    }
+
+    pub fn parse_fen_to_state(&mut self, fen: &str) {
+        self.fen_string = fen.to_string();
+        match safe_parse_board(fen) {
+            Ok(board) => {
+                let mut pieces = HashMap::new();
+                for rank_idx in 0..8usize {
+                    for file_idx in 0..8usize {
+                        let sq = chess::Square::make_square(
+                            chess::Rank::from_index(rank_idx),
+                            chess::File::from_index(file_idx),
+                        );
+                        if let Some(piece) = board.piece_on(sq) {
+                            let color = board.color_on(sq).unwrap();
+                            pieces.insert(sq, (piece, color));
+                        }
+                    }
+                }
+                self.pieces = pieces;
+
+                let parts: Vec<&str> = fen.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    self.side_to_move = if parts[1] == "b" {
+                        chess::Color::Black
+                    } else {
+                        chess::Color::White
+                    };
+                }
+                if parts.len() >= 3 {
+                    let c = parts[2];
+                    self.castle_wk = c.contains('K');
+                    self.castle_wq = c.contains('Q');
+                    self.castle_bk = c.contains('k');
+                    self.castle_bq = c.contains('q');
+                }
+                if parts.len() >= 4 {
+                    if parts[3] == "-" {
+                        self.en_passant_file = None;
+                    } else {
+                        let idx = (parts[3].chars().next().unwrap_or('-') as u8)
+                            .wrapping_sub(b'a') as usize;
+                        self.en_passant_file =
+                            if idx < 8 { Some(chess::File::from_index(idx)) } else { None };
+                    }
+                }
+                self.fen_error = None;
+            }
+            Err(e) => {
+                self.fen_error = Some(e);
+            }
+        }
+    }
+}
+
+/// Parse a FEN string without risking a panic from the chess crate.
+///
+/// The chess crate aborts on positions it considers structurally broken
+/// (missing kings, pawns on the back ranks, etc.).  We catch those cases
+/// with cheap string checks before ever handing the FEN to the library.
+fn safe_parse_board(fen: &str) -> Result<chess::Board, String> {
+    let placement = fen.split_whitespace().next().unwrap_or("");
+
+    // Both kings must be present.
+    if !placement.contains('K') {
+        return Err("Missing white king (K)".to_string());
+    }
+    if !placement.contains('k') {
+        return Err("Missing black king (k)".to_string());
+    }
+
+    // FEN rank order: rank 8 first, rank 1 last.
+    let ranks: Vec<&str> = placement.split('/').collect();
+    if ranks.len() == 8 {
+        if ranks[0].contains('P') || ranks[0].contains('p') {
+            return Err("Pawns cannot be on rank 8".to_string());
+        }
+        if ranks[7].contains('P') || ranks[7].contains('p') {
+            return Err("Pawns cannot be on rank 1".to_string());
+        }
+    }
+
+    chess::Board::from_str(fen).map_err(|e| format!("{:?}", e))
+}
 
 /// A GUI chess game that allows playing against UCI-compatible chess engines
 #[derive(Parser, Debug)]
@@ -92,6 +336,7 @@ pub struct ChessApp {
     ui: ChessUI,
     engine_thinking: bool,
     window_size: Size<u32>,
+    screen: AppScreen,
 }
 
 // Messages that can be sent to update the application state
@@ -109,6 +354,19 @@ pub enum Message {
     ExitViewMode,
     ScrollToBottom,
     PromotePawn(PromotionPiece),
+    // Setup screen messages
+    EnterSetupMode,
+    ExitSetupMode,
+    SetupSquareClicked(chess::Square),
+    SetupPaletteSelected(Option<(chess::Piece, chess::Color)>),
+    SetupSideToMove(chess::Color),
+    SetupCastlingToggle(u8),
+    SetupEnPassant(Option<chess::File>),
+    SetupFenChanged(String),
+    SetupClearBoard,
+    SetupLoadStart,
+    SetupStartGame,
+    SetupPlayerColor(chess::Color),
 }
 
 impl Application for ChessApp {
@@ -141,6 +399,7 @@ impl Application for ChessApp {
             ui,
             engine_thinking: flags.play_as_black,
             window_size: Size::new(800, 600),
+            screen: AppScreen::Game,
         };
 
         // Set thinking state in game if playing as black
@@ -207,6 +466,13 @@ impl Application for ChessApp {
                 // Handle square click
                 if let Ok(mut game) = self.game.lock() {
                     if game.select_square(square) {
+                        // select_square returns true for both "move completed"
+                        // and "promotion dialog opened".  Don't ask the engine
+                        // to move until the player has chosen a promotion piece.
+                        if game.pending_promotion().is_some() {
+                            return Command::none();
+                        }
+
                         // Move was made, get engine response
                         if game.game_result().is_none() {
                             self.engine_thinking = true;
@@ -424,10 +690,159 @@ impl Application for ChessApp {
                 // Scroll move history to bottom - handled by the command
                 Command::none()
             }
+
+            // ── Setup screen messages ─────────────────────────────────────
+            Message::EnterSetupMode => {
+                let (board, player_color) = if let Ok(game) = self.game.lock() {
+                    (game.current_position(), game.player_color())
+                } else {
+                    (chess::Board::default(), chess::Color::White)
+                };
+                self.screen = AppScreen::Setup(SetupState::from_board(&board, player_color));
+                Command::none()
+            }
+
+            Message::ExitSetupMode => {
+                self.screen = AppScreen::Game;
+                Command::none()
+            }
+
+            Message::SetupSquareClicked(sq) => {
+                if let AppScreen::Setup(ref mut state) = self.screen {
+                    match state.selected_palette {
+                        Some((piece, color)) => {
+                            state.pieces.insert(sq, (piece, color));
+                        }
+                        None => {
+                            state.pieces.remove(&sq);
+                        }
+                    }
+                    state.rebuild_fen();
+                }
+                Command::none()
+            }
+
+            Message::SetupPaletteSelected(palette) => {
+                if let AppScreen::Setup(ref mut state) = self.screen {
+                    state.selected_palette = palette;
+                }
+                Command::none()
+            }
+
+            Message::SetupSideToMove(color) => {
+                if let AppScreen::Setup(ref mut state) = self.screen {
+                    state.side_to_move = color;
+                    state.rebuild_fen();
+                }
+                Command::none()
+            }
+
+            Message::SetupCastlingToggle(mask) => {
+                if let AppScreen::Setup(ref mut state) = self.screen {
+                    if mask & 1 != 0 { state.castle_wk = !state.castle_wk; }
+                    if mask & 2 != 0 { state.castle_wq = !state.castle_wq; }
+                    if mask & 4 != 0 { state.castle_bk = !state.castle_bk; }
+                    if mask & 8 != 0 { state.castle_bq = !state.castle_bq; }
+                    state.rebuild_fen();
+                }
+                Command::none()
+            }
+
+            Message::SetupEnPassant(file) => {
+                if let AppScreen::Setup(ref mut state) = self.screen {
+                    state.en_passant_file = file;
+                    state.rebuild_fen();
+                }
+                Command::none()
+            }
+
+            Message::SetupFenChanged(fen) => {
+                if let AppScreen::Setup(ref mut state) = self.screen {
+                    state.parse_fen_to_state(&fen);
+                }
+                Command::none()
+            }
+
+            Message::SetupClearBoard => {
+                if let AppScreen::Setup(ref mut state) = self.screen {
+                    state.pieces.clear();
+                    state.castle_wk = false;
+                    state.castle_wq = false;
+                    state.castle_bk = false;
+                    state.castle_bq = false;
+                    state.en_passant_file = None;
+                    state.rebuild_fen();
+                }
+                Command::none()
+            }
+
+            Message::SetupLoadStart => {
+                if let AppScreen::Setup(ref mut state) = self.screen {
+                    let player_color = state.player_color;
+                    *state = SetupState::from_board(&chess::Board::default(), player_color);
+                }
+                Command::none()
+            }
+
+            Message::SetupPlayerColor(color) => {
+                if let AppScreen::Setup(ref mut state) = self.screen {
+                    state.player_color = color;
+                }
+                Command::none()
+            }
+
+            Message::SetupStartGame => {
+                let (fen, player_color) = if let AppScreen::Setup(ref state) = self.screen {
+                    if state.fen_error.is_some() {
+                        return Command::none();
+                    }
+                    (state.fen_string.clone(), state.player_color)
+                } else {
+                    return Command::none();
+                };
+
+                let needs_engine_move = if let Ok(mut game) = self.game.lock() {
+                    game.reset_from_fen(&fen, player_color);
+                    game.current_position().side_to_move() != player_color
+                } else {
+                    false
+                };
+
+                self.screen = AppScreen::Game;
+
+                if needs_engine_move {
+                    self.engine_thinking = true;
+                    if let Ok(mut game) = self.game.lock() {
+                        game.set_thinking(true);
+                    }
+                    let engine_clone = Arc::clone(&self.engine);
+                    let game_clone = Arc::clone(&self.game);
+                    return Command::perform(
+                        async move {
+                            if let Ok(game) = game_clone.lock() {
+                                if let Ok(mut engine) = engine_clone.lock() {
+                                    let fen = game.current_position().to_string();
+                                    let _ = engine.get_move(&fen);
+                                }
+                            }
+                        },
+                        |_| Message::CheckEngineMove,
+                    );
+                }
+
+                Command::none()
+            }
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
+        match &self.screen {
+            AppScreen::Setup(state) => {
+                return self.ui.view_setup(state, self.window_size.width, self.window_size.height);
+            }
+            AppScreen::Game => {}
+        }
+
         // Get a snapshot of the game state
         let game_state = if let Ok(game) = self.game.lock() {
             (

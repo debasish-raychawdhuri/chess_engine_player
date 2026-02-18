@@ -2,12 +2,12 @@ use chess::{Board, ChessMove, Color, File, Piece, Rank, Square};
 use iced::widget::button::Appearance;
 use iced::widget::scrollable::Scrollable;
 use iced::{
-    widget::{button, column, container, row, svg, text, Space},
+    widget::{button, column, container, row, svg, text, text_input, Space},
     Alignment, Color as IcedColor, Element, Length,
 };
 
 use crate::game::{MoveRecord, PromotionPiece};
-use crate::Message;
+use crate::{Message, SetupState};
 
 // Colors for the chess board
 const LIGHT_SQUARE: IcedColor = IcedColor::from_rgb(0.93, 0.93, 0.8);
@@ -291,6 +291,109 @@ impl iced::widget::button::StyleSheet for PromotionButtonStyle {
     }
 }
 
+// Style for piece palette buttons (highlighted when selected)
+struct PaletteButtonStyle {
+    selected: bool,
+}
+
+impl iced::widget::button::StyleSheet for PaletteButtonStyle {
+    type Style = iced::Theme;
+
+    fn active(&self, _style: &Self::Style) -> Appearance {
+        if self.selected {
+            Appearance {
+                background: Some(IcedColor::from_rgb(0.75, 0.55, 0.05).into()),
+                border_radius: 4.0.into(),
+                border_width: 2.0,
+                border_color: IcedColor::from_rgb(1.0, 0.85, 0.2),
+                text_color: IcedColor::WHITE,
+                ..Default::default()
+            }
+        } else {
+            Appearance {
+                background: Some(IcedColor::from_rgb(0.22, 0.22, 0.22).into()),
+                border_radius: 4.0.into(),
+                border_width: 1.0,
+                border_color: IcedColor::from_rgb(0.4, 0.4, 0.4),
+                text_color: IcedColor::WHITE,
+                ..Default::default()
+            }
+        }
+    }
+
+    fn hovered(&self, style: &Self::Style) -> Appearance {
+        let base = self.active(style);
+        Appearance {
+            background: Some(IcedColor::from_rgb(0.35, 0.35, 0.35).into()),
+            ..base
+        }
+    }
+
+    fn pressed(&self, style: &Self::Style) -> Appearance {
+        self.active(style)
+    }
+}
+
+// Style for toggle buttons (active = green, inactive = grey)
+struct ToggleButtonStyle {
+    active: bool,
+}
+
+impl iced::widget::button::StyleSheet for ToggleButtonStyle {
+    type Style = iced::Theme;
+
+    fn active(&self, _style: &Self::Style) -> Appearance {
+        if self.active {
+            Appearance {
+                background: Some(IcedColor::from_rgb(0.2, 0.55, 0.25).into()),
+                border_radius: 4.0.into(),
+                border_width: 0.0,
+                border_color: IcedColor::TRANSPARENT,
+                text_color: IcedColor::WHITE,
+                ..Default::default()
+            }
+        } else {
+            Appearance {
+                background: Some(IcedColor::from_rgb(0.28, 0.28, 0.28).into()),
+                border_radius: 4.0.into(),
+                border_width: 0.0,
+                border_color: IcedColor::TRANSPARENT,
+                text_color: IcedColor::from_rgb(0.7, 0.7, 0.7),
+                ..Default::default()
+            }
+        }
+    }
+
+    fn hovered(&self, _style: &Self::Style) -> Appearance {
+        Appearance {
+            background: Some(IcedColor::from_rgb(0.38, 0.38, 0.38).into()),
+            border_radius: 4.0.into(),
+            border_width: 0.0,
+            border_color: IcedColor::TRANSPARENT,
+            text_color: IcedColor::WHITE,
+            ..Default::default()
+        }
+    }
+}
+
+// Style for disabled buttons
+struct DisabledButtonStyle;
+
+impl iced::widget::button::StyleSheet for DisabledButtonStyle {
+    type Style = iced::Theme;
+
+    fn active(&self, _style: &Self::Style) -> Appearance {
+        Appearance {
+            background: Some(IcedColor::from_rgb(0.28, 0.28, 0.28).into()),
+            border_radius: 12.0.into(),
+            border_width: 0.0,
+            border_color: IcedColor::TRANSPARENT,
+            text_color: IcedColor::from_rgb(0.45, 0.45, 0.45),
+            ..Default::default()
+        }
+    }
+}
+
 impl ChessUI {
     pub fn new() -> Self {
         ChessUI {
@@ -495,11 +598,23 @@ impl ChessUI {
         .padding(10)
         .style(iced::theme::Button::Custom(Box::new(RoundedButtonStyle)));
 
-        // Create the layout
-        let controls = row![reset_button, undo_button, flip_button]
-            .spacing(10)
+        let setup_button = button(text("Setup Position"))
+            .on_press(Message::EnterSetupMode)
             .padding(10)
-            .align_items(Alignment::Center);
+            .style(iced::theme::Button::Custom(Box::new(RoundedButtonStyle)));
+
+        // Create the layout: game controls on row 1, setup on row 2
+        let controls = column![
+            row![reset_button, undo_button, flip_button]
+                .spacing(10)
+                .padding([10, 10, 0, 10])
+                .align_items(Alignment::Center),
+            row![setup_button]
+                .spacing(10)
+                .padding([4, 10, 4, 10])
+                .align_items(Alignment::Center),
+        ]
+        .align_items(Alignment::Center);
 
         // Build move history display with table-like layout
         let mut move_history_column = column![];
@@ -651,90 +766,49 @@ impl ChessUI {
             .width(Length::Fixed(320.0))
             .style(iced::theme::Container::Custom(Box::new(SidePanelStyle)));
 
-        // Promotion dialog
-        let promotion_overlay: Option<Element<'_, Message>> = if pending_promotion.is_some() {
-            let promotion_buttons: Element<'_, Message> = row![
+        // When a promotion is pending, replace the side panel with the
+        // promotion picker so it is always fully visible.
+        let right_panel: Element<'_, Message> = if pending_promotion.is_some() {
+            let btn = |piece: Piece, msg: PromotionPiece| {
                 button(
-                    svg(self.piece_handles.get(Piece::Queen, player_color).clone())
-                        .width(Length::Fixed(40.0))
-                        .height(Length::Fixed(40.0))
+                    svg(self.piece_handles.get(piece, player_color))
+                        .width(Length::Fixed(56.0))
+                        .height(Length::Fixed(56.0)),
                 )
-                .on_press(Message::PromotePawn(PromotionPiece::Queen))
-                .padding(5)
-                .style(iced::theme::Button::Custom(Box::new(PromotionButtonStyle))),
-                button(
-                    svg(self.piece_handles.get(Piece::Rook, player_color).clone())
-                        .width(Length::Fixed(40.0))
-                        .height(Length::Fixed(40.0))
-                )
-                .on_press(Message::PromotePawn(PromotionPiece::Rook))
-                .padding(5)
-                .style(iced::theme::Button::Custom(Box::new(PromotionButtonStyle))),
-                button(
-                    svg(self.piece_handles.get(Piece::Bishop, player_color).clone())
-                        .width(Length::Fixed(40.0))
-                        .height(Length::Fixed(40.0))
-                )
-                .on_press(Message::PromotePawn(PromotionPiece::Bishop))
-                .padding(5)
-                .style(iced::theme::Button::Custom(Box::new(PromotionButtonStyle))),
-                button(
-                    svg(self.piece_handles.get(Piece::Knight, player_color).clone())
-                        .width(Length::Fixed(40.0))
-                        .height(Length::Fixed(40.0))
-                )
-                .on_press(Message::PromotePawn(PromotionPiece::Knight))
-                .padding(5)
-                .style(iced::theme::Button::Custom(Box::new(PromotionButtonStyle))),
-            ]
-            .spacing(10)
-            .padding(15)
-            .into();
+                .on_press(Message::PromotePawn(msg))
+                .padding(8)
+                .style(iced::theme::Button::Custom(Box::new(PromotionButtonStyle)))
+            };
 
-            let promotion_dialog = container(
-                column![
-                    text("Promote to:").size(18).style(IcedColor::WHITE),
-                    Space::with_height(Length::Fixed(10.0)),
-                    promotion_buttons,
-                ]
-                .align_items(Alignment::Center),
-            )
-            .style(iced::theme::Container::Custom(Box::new(SidePanelStyle)))
-            .width(Length::Fixed(220.0))
-            .center_x()
-            .center_y();
-
-            Some(
-                container(promotion_dialog)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .style(iced::theme::Container::Box)
-                    .into(),
-            )
-        } else {
-            None
-        };
-
-        // Combine board and info panel
-        let content = if let Some(overlay) = promotion_overlay {
             container(
                 column![
-                    row![board_view, info_panel,]
-                        .spacing(20)
-                        .padding([10, 20])
-                        .align_items(Alignment::Center),
-                    overlay,
+                    Space::with_height(Length::Fill),
+                    text("Promote to:").size(20),
+                    Space::with_height(Length::Fixed(16.0)),
+                    row![
+                        btn(Piece::Queen,  PromotionPiece::Queen),
+                        btn(Piece::Rook,   PromotionPiece::Rook),
+                        btn(Piece::Bishop, PromotionPiece::Bishop),
+                        btn(Piece::Knight, PromotionPiece::Knight),
+                    ]
+                    .spacing(12),
+                    Space::with_height(Length::Fill),
                 ]
-                .height(Length::Fill),
+                .align_items(Alignment::Center)
+                .width(Length::Fill),
             )
-            .width(Length::Fill)
+            .width(Length::Fixed(320.0))
             .height(Length::Fill)
-            .center_x()
-            .center_y()
+            .style(iced::theme::Container::Custom(Box::new(SidePanelStyle)))
             .into()
         } else {
+            info_panel.into()
+        };
+
+        // Combine board and side panel
+        let content = {
             container(
-                row![board_view, info_panel,]
+                row![board_view, right_panel]
                     .spacing(20)
                     .padding([10, 20])
                     .align_items(Alignment::Center),
@@ -747,5 +821,355 @@ impl ChessUI {
         };
 
         content
+    }
+
+    pub fn view_setup<'a>(
+        &'a self,
+        state: &'a SetupState,
+        window_width: u32,
+        window_height: u32,
+    ) -> Element<'a, Message> {
+        // Calculate board size
+        let available_height = window_height as f32 * 0.82;
+        let available_width = window_width as f32 * 0.55;
+        let board_size = available_height
+            .min(available_width)
+            .max(self.min_board_size)
+            .min(self.max_board_size);
+        let square_size = board_size / 8.0;
+
+        // ── Board with rank/file labels ───────────────────────────────────
+        let label_size = 16.0; // width for rank labels, height for file labels
+        let label_color = IcedColor::from_rgb(0.7, 0.7, 0.7);
+
+        let mut board_container = column![];
+        for rank in 0..8u8 {
+            let board_rank = 7 - rank as usize;
+
+            // Rank label on the left (8 … 1)
+            let rank_label = container(
+                text(format!("{}", board_rank + 1))
+                    .size(11)
+                    .style(label_color),
+            )
+            .width(Length::Fixed(label_size))
+            .height(Length::Fixed(square_size))
+            .center_y();
+
+            let mut row_container = row![rank_label];
+            for file in 0..8u8 {
+                let board_file = file as usize;
+                let sq = Square::make_square(
+                    Rank::from_index(board_rank),
+                    File::from_index(board_file),
+                );
+                let is_dark = (board_rank + board_file) % 2 == 1;
+                let square_color = if is_dark { DARK_SQUARE } else { LIGHT_SQUARE };
+
+                let mut square_content = column![];
+                if let Some((piece, color)) = state.pieces.get(&sq) {
+                    let handle = self.piece_handles.get(*piece, *color);
+                    square_content = column![
+                        Space::with_height(Length::Fixed(square_size * 0.1)),
+                        svg(handle)
+                            .width(Length::Fixed(square_size * 0.8))
+                            .height(Length::Fixed(square_size * 0.8))
+                    ]
+                    .width(Length::Fixed(square_size))
+                    .height(Length::Fixed(square_size))
+                    .align_items(Alignment::Center);
+                }
+
+                let square_element = button(
+                    container(square_content)
+                        .width(Length::Fixed(square_size))
+                        .height(Length::Fixed(square_size))
+                        .style(iced::theme::Container::Custom(Box::new(
+                            ChessSquareStyle { color: square_color },
+                        ))),
+                )
+                .on_press(Message::SetupSquareClicked(sq))
+                .padding(0);
+
+                row_container = row_container.push(square_element);
+            }
+            board_container = board_container.push(row_container);
+        }
+
+        // File labels along the bottom (a … h)
+        let mut file_label_row = row![Space::with_width(Length::Fixed(label_size))];
+        for fi in 0..8usize {
+            let fc = (b'a' + fi as u8) as char;
+            file_label_row = file_label_row.push(
+                container(text(fc.to_string()).size(11).style(label_color))
+                    .width(Length::Fixed(square_size))
+                    .center_x(),
+            );
+        }
+
+        let board_view = container(
+            column![board_container, file_label_row].spacing(2),
+        )
+        .width(Length::Fixed(board_size + label_size));
+
+        // ── Piece Palette ─────────────────────────────────────────────────
+        let palette_size = 34.0;
+        let pieces_list: &[(Piece, &str)] = &[
+            (Piece::King,   "K"),
+            (Piece::Queen,  "Q"),
+            (Piece::Rook,   "R"),
+            (Piece::Bishop, "B"),
+            (Piece::Knight, "N"),
+            (Piece::Pawn,   "P"),
+        ];
+
+        let mut palette_col = column![
+            row![
+                container(text("White").size(11))
+                    .width(Length::Fixed(palette_size + 10.0))
+                    .center_x(),
+                container(text("Black").size(11))
+                    .width(Length::Fixed(palette_size + 10.0))
+                    .center_x(),
+            ]
+            .spacing(4),
+        ]
+        .spacing(3);
+
+        for (piece, _label) in pieces_list {
+            let is_w = state.selected_palette == Some((*piece, Color::White));
+            let is_b = state.selected_palette == Some((*piece, Color::Black));
+
+            let w_btn = button(
+                svg(self.piece_handles.get(*piece, Color::White))
+                    .width(Length::Fixed(palette_size))
+                    .height(Length::Fixed(palette_size)),
+            )
+            .on_press(Message::SetupPaletteSelected(Some((*piece, Color::White))))
+            .padding(3)
+            .style(iced::theme::Button::Custom(Box::new(PaletteButtonStyle { selected: is_w })));
+
+            let b_btn = button(
+                svg(self.piece_handles.get(*piece, Color::Black))
+                    .width(Length::Fixed(palette_size))
+                    .height(Length::Fixed(palette_size)),
+            )
+            .on_press(Message::SetupPaletteSelected(Some((*piece, Color::Black))))
+            .padding(3)
+            .style(iced::theme::Button::Custom(Box::new(PaletteButtonStyle { selected: is_b })));
+
+            palette_col = palette_col.push(row![w_btn, b_btn].spacing(4));
+        }
+
+        let is_eraser = state.selected_palette.is_none();
+        let eraser_btn = button(text("Eraser").size(12))
+            .on_press(Message::SetupPaletteSelected(None))
+            .padding([4, 12])
+            .style(iced::theme::Button::Custom(Box::new(PaletteButtonStyle { selected: is_eraser })));
+        palette_col = palette_col.push(
+            container(eraser_btn).width(Length::Fill).center_x()
+        );
+
+        // ── Side to Move ──────────────────────────────────────────────────
+        let stm_section = column![
+            text("Side to move:").size(13),
+            row![
+                button(text("White").size(12))
+                    .on_press(Message::SetupSideToMove(Color::White))
+                    .padding([4, 8])
+                    .style(iced::theme::Button::Custom(Box::new(ToggleButtonStyle {
+                        active: state.side_to_move == Color::White,
+                    }))),
+                button(text("Black").size(12))
+                    .on_press(Message::SetupSideToMove(Color::Black))
+                    .padding([4, 8])
+                    .style(iced::theme::Button::Custom(Box::new(ToggleButtonStyle {
+                        active: state.side_to_move == Color::Black,
+                    }))),
+            ]
+            .spacing(5),
+        ]
+        .spacing(4);
+
+        // ── Castling ──────────────────────────────────────────────────────
+        let castling_section = column![
+            text("Castling:").size(13),
+            row![
+                text("W:").size(11),
+                button(text("K").size(12))
+                    .on_press(Message::SetupCastlingToggle(1))
+                    .padding([4, 7])
+                    .style(iced::theme::Button::Custom(Box::new(ToggleButtonStyle { active: state.castle_wk }))),
+                button(text("Q").size(12))
+                    .on_press(Message::SetupCastlingToggle(2))
+                    .padding([4, 7])
+                    .style(iced::theme::Button::Custom(Box::new(ToggleButtonStyle { active: state.castle_wq }))),
+                Space::with_width(Length::Fixed(4.0)),
+                text("B:").size(11),
+                button(text("k").size(12))
+                    .on_press(Message::SetupCastlingToggle(4))
+                    .padding([4, 7])
+                    .style(iced::theme::Button::Custom(Box::new(ToggleButtonStyle { active: state.castle_bk }))),
+                button(text("q").size(12))
+                    .on_press(Message::SetupCastlingToggle(8))
+                    .padding([4, 7])
+                    .style(iced::theme::Button::Custom(Box::new(ToggleButtonStyle { active: state.castle_bq }))),
+            ]
+            .spacing(4)
+            .align_items(Alignment::Center),
+        ]
+        .spacing(4);
+
+        // ── En Passant ────────────────────────────────────────────────────
+        let ep_none_btn = button(text("-").size(11))
+            .on_press(Message::SetupEnPassant(None))
+            .padding([3, 6])
+            .style(iced::theme::Button::Custom(Box::new(ToggleButtonStyle {
+                active: state.en_passant_file.is_none(),
+            })));
+        let mut ep_row = row![ep_none_btn].spacing(2);
+        for fi in 0..8usize {
+            let f = File::from_index(fi);
+            let fc = (b'a' + fi as u8) as char;
+            let ep_btn = button(text(fc.to_string()).size(11))
+                .on_press(Message::SetupEnPassant(Some(f)))
+                .padding([3, 5])
+                .style(iced::theme::Button::Custom(Box::new(ToggleButtonStyle {
+                    active: state.en_passant_file == Some(f),
+                })));
+            ep_row = ep_row.push(ep_btn);
+        }
+        let ep_section = column![
+            text("En passant:").size(13),
+            ep_row,
+        ]
+        .spacing(4);
+
+        // ── You play as ───────────────────────────────────────────────────
+        let you_play_section = column![
+            text("You play as:").size(13),
+            row![
+                button(text("White").size(12))
+                    .on_press(Message::SetupPlayerColor(Color::White))
+                    .padding([4, 8])
+                    .style(iced::theme::Button::Custom(Box::new(ToggleButtonStyle {
+                        active: state.player_color == Color::White,
+                    }))),
+                button(text("Black").size(12))
+                    .on_press(Message::SetupPlayerColor(Color::Black))
+                    .padding([4, 8])
+                    .style(iced::theme::Button::Custom(Box::new(ToggleButtonStyle {
+                        active: state.player_color == Color::Black,
+                    }))),
+            ]
+            .spacing(5),
+        ]
+        .spacing(4);
+
+        // ── Side Panel Assembly ───────────────────────────────────────────
+        let side_panel = container(
+            column![
+                text("Piece Palette").size(15),
+                Space::with_height(Length::Fixed(6.0)),
+                palette_col,
+                Space::with_height(Length::Fixed(10.0)),
+                stm_section,
+                Space::with_height(Length::Fixed(8.0)),
+                castling_section,
+                Space::with_height(Length::Fixed(8.0)),
+                ep_section,
+                Space::with_height(Length::Fixed(8.0)),
+                you_play_section,
+            ]
+            .spacing(2)
+            .padding(12),
+        )
+        .width(Length::Fixed(210.0))
+        .style(iced::theme::Container::Custom(Box::new(SidePanelStyle)));
+
+        // ── FEN Input ─────────────────────────────────────────────────────
+        let fen_input = text_input("FEN string...", &state.fen_string)
+            .on_input(|s| Message::SetupFenChanged(s))
+            .padding(7)
+            .size(13)
+            .width(Length::Fill);
+
+        let fen_error_el: Element<'_, Message> = if let Some(ref err) = state.fen_error {
+            text(format!("Error: {}", err))
+                .size(12)
+                .style(IcedColor::from_rgb(1.0, 0.35, 0.35))
+                .into()
+        } else {
+            Space::with_height(Length::Fixed(0.0)).into()
+        };
+
+        let clear_btn = button(text("Clear").size(13))
+            .on_press(Message::SetupClearBoard)
+            .padding([6, 12])
+            .style(iced::theme::Button::Custom(Box::new(RoundedButtonStyle)));
+
+        let start_pos_btn = button(text("Starting Pos").size(13))
+            .on_press(Message::SetupLoadStart)
+            .padding([6, 12])
+            .style(iced::theme::Button::Custom(Box::new(RoundedButtonStyle)));
+
+        let cancel_btn = button(text("Cancel").size(14))
+            .on_press(Message::ExitSetupMode)
+            .padding([6, 16])
+            .style(iced::theme::Button::Custom(Box::new(ExitViewButtonStyle)));
+
+        let start_game_btn: Element<'_, Message> = if state.fen_error.is_none() {
+            button(text("Start Game").size(14))
+                .on_press(Message::SetupStartGame)
+                .padding([6, 16])
+                .style(iced::theme::Button::Custom(Box::new(RoundedButtonStyle)))
+                .into()
+        } else {
+            button(text("Start Game").size(14))
+                .padding([6, 16])
+                .style(iced::theme::Button::Custom(Box::new(DisabledButtonStyle)))
+                .into()
+        };
+
+        let bottom_bar = container(
+            column![
+                row![
+                    text("FEN:").size(13),
+                    fen_input,
+                ]
+                .spacing(8)
+                .align_items(Alignment::Center),
+                fen_error_el,
+                row![
+                    clear_btn,
+                    start_pos_btn,
+                    Space::with_width(Length::Fill),
+                    cancel_btn,
+                    start_game_btn,
+                ]
+                .spacing(10)
+                .align_items(Alignment::Center),
+            ]
+            .spacing(6)
+            .padding([8, 15]),
+        )
+        .width(Length::Fill)
+        .style(iced::theme::Container::Custom(Box::new(SidePanelStyle)));
+
+        // ── Full Layout ───────────────────────────────────────────────────
+        container(
+            column![
+                row![board_view, side_panel]
+                    .spacing(15)
+                    .padding([10, 20])
+                    .align_items(Alignment::Start),
+                bottom_bar,
+            ]
+            .padding(5),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x()
+        .into()
     }
 }
